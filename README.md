@@ -14,12 +14,7 @@ C and verified at every step against real QEMU.
   see [`riscv-emu/README.md`](riscv-emu/README.md) for the full phase-by-phase
   build log and every bug found along the way.
 
-![UHP Desktop's VM configuration dialog](docs/screenshot.png)
-
-<!-- Shows the "New VM" dialog, not the main window/detail page - a
-     fresher screenshot of those would still be welcome, but this one is
-     at least current (post Phase 1-3 UI overhaul, with the ComboBox
-     dim-text bug fixed). -->
+![UHP Desktop's main window, with one VM running](docs/screenshot.png)
 
 ## Requirements
 
