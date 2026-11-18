@@ -122,7 +122,17 @@
              template honors simple setters. Replacing the whole template is
              the only reliable fix for the closed box. Previously this lived
              only in VmEditWindow.xaml; every other ComboBox in the app (none
-             yet, but Phase 2+ will add more) gets it for free now. -->
+             yet, but Phase 2+ will add more) gets it for free now.
+
+             ContentSite's own TextElement.Foreground binding below was
+             missing until found via docs/screenshot.png: the closed box's
+             selected-value text (Architecture/Accelerator/Network/Display
+             backend in the VM Configuration dialog) rendered dim/gray
+             instead of this style's own Foreground=#F1F1F1, since a bare
+             ContentPresenter does not inherit Foreground from its
+             TemplatedParent automatically - it needs the explicit
+             TextElement.Foreground attached-property binding WPF uses for
+             exactly this. -->
         <Style TargetType="ComboBox">
             <Setter Property="Background" Value="{StaticResource CardBg}"/>
             <Setter Property="Foreground" Value="#F1F1F1"/>
@@ -160,6 +170,7 @@
                                               Content="{TemplateBinding SelectionBoxItem}"
                                               ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
                                               ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"
+                                              TextElement.Foreground="{TemplateBinding Foreground}"
                                               Margin="6,3,24,3"
                                               VerticalAlignment="Center"
                                               HorizontalAlignment="Left"/>

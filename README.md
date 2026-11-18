@@ -16,10 +16,10 @@ C and verified at every step against real QEMU.
 
 ![UHP Desktop's VM configuration dialog](docs/screenshot.png)
 
-<!-- This shows the "New VM" dialog, not the main window - it predates
-     the top-bar/VM-list/detail-page overhaul described above. Swap in a
-     fresher screenshot of the main window before relying on this one to
-     represent the current UI. -->
+<!-- Shows the "New VM" dialog, not the main window/detail page - a
+     fresher screenshot of those would still be welcome, but this one is
+     at least current (post Phase 1-3 UI overhaul, with the ComboBox
+     dim-text bug fixed). -->
 
 ## Requirements
 
