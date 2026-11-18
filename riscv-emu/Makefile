@@ -141,6 +141,22 @@ integration: $(BIN) tests/integration_sbi.bin boot/firmware.bin
 # it) - only the payload's own last line of output ("OK", or "FAIL n") is
 # what's actually being compared, so this checks the tail of each side's
 # output rather than a full diff the way compare/virtio-compare do.
+#
+# tr -d '\r' on both sides before the diff: real QEMU's own OpenSBI
+# console driver terminates its lines CRLF (ordinary real-UART-console
+# behavior), tests/integration_sbi.S's own payload writes plain "OK\n" -
+# a trailing \r is exactly the same kind of each-side's-own-firmware
+# noise the comment above already tolerates everywhere else, just
+# reaching the payload's own final line too. Confirmed NOT an emulator
+# bug (riscv-emu's own output has no \r at all, matching the payload's
+# own literal bytes) and confirmed environment-dependent rather than
+# this comparison's own content ever actually differing: identical bytes
+# on disk compared equal when make's own recipe shell ran the diff
+# locally, yet compared unequal both under a plain interactive bash
+# invocation of the exact same command and in CI (GitHub's windows-latest
+# runner) - two different shells evidently handle process substitution's
+# pipe text/binary mode differently here, which this sidesteps rather
+# than depends on.
 integration-compare: $(BIN) tests/integration_sbi.elf tests/integration_sbi.bin boot/firmware.bin
 	@./$(BIN) --deterministic-time --entry 0x80000000 --load 0x80000000 boot/firmware.bin \
 	          --load 0x80200000 tests/integration_sbi.bin \
@@ -149,7 +165,7 @@ integration-compare: $(BIN) tests/integration_sbi.elf tests/integration_sbi.bin 
 		> build-integration-qemu.out 2>/dev/null
 	@tail -n 1 build-integration-riscv-emu.out
 	@tail -n 1 build-integration-qemu.out
-	@diff <(tail -n 1 build-integration-riscv-emu.out) <(tail -n 1 build-integration-qemu.out) \
+	@diff <(tail -n 1 build-integration-riscv-emu.out | tr -d '\r') <(tail -n 1 build-integration-qemu.out | tr -d '\r') \
 		&& echo "riscv-emu matches QEMU (SBI dispatch, both via their own firmware)"
 
 # --- Boot and interactive tests: boot/boot_test.sh and
