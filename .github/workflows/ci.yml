@@ -23,6 +23,21 @@ jobs:
           choco install mingw llvm qemu -y --no-progress
         shell: pwsh
 
+      # Chocolatey's mingw package registers its own PATH entry (visible
+      # in the install log as "PATH environment variable does not have
+      # ... Adding..."), but its qemu package does not - confirmed the
+      # hard way: this workflow's own first real run built riscv-emu.exe
+      # fine (gcc was found) but `make compare` failed with "Error 127"
+      # (qemu-system-riscv64: command not found), producing an empty
+      # build-qemu.out that then "differed" from every line of riscv-emu's
+      # own real output - not an actual emulator regression, just QEMU
+      # never being on PATH to begin with. $GITHUB_PATH, not $env:PATH -
+      # a plain in-process PATH edit would not survive into the next step
+      # anyway, since each `run:` spawns a fresh shell.
+      - name: Add QEMU to PATH
+        run: echo "C:\Program Files\qemu" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+        shell: pwsh
+
       - name: Build riscv-emu
         working-directory: riscv-emu
         run: make
