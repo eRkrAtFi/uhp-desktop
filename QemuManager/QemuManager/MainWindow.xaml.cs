@@ -49,6 +49,26 @@ public partial class MainWindow : Window
         // the app before its window ever appeared. Both fields exist by now.
         VirtualMachinesNode.IsSelected = true;
 
+        // Ask, rather than silently copying (including every disk image,
+        // which the old behavior did) - see AppPaths.HasUnimportedLegacyData's
+        // own remarks for why. Must run before LoadVms() below: if the
+        // user says Import, the copied vms/*.json need to already be in
+        // place for that first LoadVms() to pick them up, not a second,
+        // separate refresh afterward.
+        if (AppPaths.HasUnimportedLegacyData())
+        {
+            var result = MessageBox.Show(this,
+                "Found existing UHP data in %APPDATA%. Import it?\n\n" +
+                "Only VM configurations are imported - disk images are not copied and stay where they already are.",
+                "Import existing data?", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            if (result == MessageBoxResult.Yes)
+            {
+                var imported = AppPaths.ImportLegacyConfigs(AppContext.BaseDirectory,
+                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData));
+                SetStatus($"Imported {imported} VM configuration(s) from %APPDATA%.");
+            }
+        }
+
         _settings = AppSettings.Load();
         _vmService.StateChanged += () => Dispatcher.Invoke(RefreshRunStates);
         // Replaces the DispatcherTimer this window used to own and poll

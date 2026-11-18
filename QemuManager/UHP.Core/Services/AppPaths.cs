@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 
 namespace QemuManager.Services;
 
@@ -76,41 +77,77 @@ public static class AppPaths
 
         var portableDir = Path.Combine(baseDirectory, "data");
         var isPortable = File.Exists(Path.Combine(baseDirectory, "portable.flag")) || Directory.Exists(portableDir);
-        if (!isPortable) return Path.Combine(roamingAppDataDir, "QemuManager");
-
-        // Portable mode: one-time, best-effort migration from this app's
-        // pre-portable location (%APPDATA%\QemuManager) if the portable
-        // folder doesn't exist yet - copies, not moves, so existing VM
-        // configs and settings do not appear to vanish just because this
-        // .exe is now somewhere else, and the old location is left intact
-        // in case this .exe is one of several copies.
-        var legacyDir = Path.Combine(roamingAppDataDir, "QemuManager");
-        if (!Directory.Exists(portableDir) && Directory.Exists(legacyDir))
-        {
-            try
-            {
-                CopyDirectory(legacyDir, portableDir);
-            }
-            catch
-            {
-                // Best effort - e.g. no permission to read the old location.
-                // The app still works, just starting empty rather than
-                // losing anything that was never copied.
-            }
-        }
-
-        return portableDir;
+        return isPortable ? portableDir : Path.Combine(roamingAppDataDir, "QemuManager");
     }
 
-    private static void CopyDirectory(string sourceDir, string destDir)
+    /// <summary>True exactly when there is something worth asking about: in
+    /// portable mode, the portable "data" folder does not exist yet, and
+    /// %APPDATA%\QemuManager (an earlier, non-portable install's own data)
+    /// has at least one saved VM. The caller - MainWindow, before its first
+    /// LoadVms() - is expected to ask the user Import/Start empty on this,
+    /// not act on it silently.
+    ///
+    /// This used to be a silent, automatic copy done inside
+    /// ResolveAppDataDir itself, including every disk image - which meant
+    /// opening a portable build on a machine that already had a real
+    /// %APPDATA%\QemuManager silently duplicated potentially
+    /// multi-gigabyte disk images into the portable folder with no
+    /// warning and no way to decline. Splitting "detect" from "import"
+    /// like this, and having import copy only VM configs (see
+    /// ImportLegacyConfigs), fixes both: nothing happens without the user
+    /// choosing it, and what does happen is small and fast regardless of
+    /// how large any attached disk images are - their VmConfig.DiskPath
+    /// is an absolute path already pointing at the original files in
+    /// their old location, untouched by copying only the JSON that
+    /// contains it.</summary>
+    public static bool HasUnimportedLegacyData(string baseDirectory, string? overrideDir, string roamingAppDataDir)
     {
-        Directory.CreateDirectory(destDir);
-        foreach (var file in Directory.EnumerateFiles(sourceDir, "*", SearchOption.AllDirectories))
+        if (!string.IsNullOrWhiteSpace(overrideDir)) return false;
+
+        var portableDir = Path.Combine(baseDirectory, "data");
+        var isPortable = File.Exists(Path.Combine(baseDirectory, "portable.flag")) || Directory.Exists(portableDir);
+        if (!isPortable || Directory.Exists(portableDir)) return false;
+
+        var legacyVmsDir = Path.Combine(roamingAppDataDir, "QemuManager", "vms");
+        return Directory.Exists(legacyVmsDir) && Directory.EnumerateFiles(legacyVmsDir, "*.json").Any();
+    }
+
+    public static bool HasUnimportedLegacyData() => HasUnimportedLegacyData(
+        AppContext.BaseDirectory,
+        Environment.GetEnvironmentVariable("QEMUMANAGER_DATA_DIR"),
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData));
+
+    /// <summary>Copies VM configs (vms/*.json) and settings.json from
+    /// %APPDATA%\QemuManager into the portable "data" folder - deliberately
+    /// never disks/, logs/, or run/ (runtime/process state that only ever
+    /// makes sense for the install that wrote it). Returns how many VM
+    /// configs were copied. Each copied VmConfig's own DiskPath is left
+    /// exactly as saved - still an absolute path into the *old* location -
+    /// so the imported VM keeps working without this needing to move or
+    /// even touch the disk image itself.</summary>
+    public static int ImportLegacyConfigs(string baseDirectory, string roamingAppDataDir)
+    {
+        var portableDir = Path.Combine(baseDirectory, "data");
+        var legacyDir = Path.Combine(roamingAppDataDir, "QemuManager");
+
+        var portableVmsDir = Path.Combine(portableDir, "vms");
+        Directory.CreateDirectory(portableVmsDir);
+
+        var count = 0;
+        var legacyVmsDir = Path.Combine(legacyDir, "vms");
+        if (Directory.Exists(legacyVmsDir))
         {
-            var relativePath = Path.GetRelativePath(sourceDir, file);
-            var destPath = Path.Combine(destDir, relativePath);
-            Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
-            if (!File.Exists(destPath)) File.Copy(file, destPath);
+            foreach (var file in Directory.EnumerateFiles(legacyVmsDir, "*.json"))
+            {
+                File.Copy(file, Path.Combine(portableVmsDir, Path.GetFileName(file)), overwrite: false);
+                count++;
+            }
         }
+
+        var legacySettings = Path.Combine(legacyDir, "settings.json");
+        if (File.Exists(legacySettings))
+            File.Copy(legacySettings, Path.Combine(portableDir, "settings.json"), overwrite: false);
+
+        return count;
     }
 }

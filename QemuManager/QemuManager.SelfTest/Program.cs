@@ -703,6 +703,92 @@ Console.WriteLine("\n--- AppPaths.ResolveAppDataDir (portable vs %APPDATA%, mark
     }
 }
 
+Console.WriteLine("\n--- AppPaths legacy-data import (Import/Start empty, not a silent auto-copy) ---");
+// The old behavior copied an entire %APPDATA%\QemuManager directory tree
+// automatically, disk images included, the first time a portable build
+// ran on a machine that already had one - confirmed directly against a
+// real %APPDATA%\QemuManager during this session's own release-zip
+// verification (copied a real multi-hundred-MB .qcow2 disk, 4 VM
+// configs, settings.json and 2 old crash logs into a scratch folder with
+// no prompt at all). This exercises the replacement: detection is
+// opt-in information for the caller to act on, not a trigger that acts
+// by itself, and the actual copy touches only vms/*.json and
+// settings.json - never disks/, logs/, or run/ - leaving each VM's own
+// DiskPath exactly as saved (still pointing at the original, uncopied
+// file in its old location).
+{
+    var fakeBaseDir = Path.Combine(Path.GetTempPath(), $"apppaths-import-test-{Guid.NewGuid():N}");
+    var fakeRoaming = Path.Combine(Path.GetTempPath(), $"apppaths-import-roaming-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(fakeBaseDir);
+    var legacyVmsDir = Path.Combine(fakeRoaming, "QemuManager", "vms");
+    var legacyDisksDir = Path.Combine(fakeRoaming, "QemuManager", "disks");
+    var legacyLogsDir = Path.Combine(fakeRoaming, "QemuManager", "logs");
+    Directory.CreateDirectory(legacyVmsDir);
+    Directory.CreateDirectory(legacyDisksDir);
+    Directory.CreateDirectory(legacyLogsDir);
+    try
+    {
+        // Not portable yet (no marker) - nothing to import regardless of
+        // what the "legacy" location has, since there is no portable
+        // folder for it to be legacy *relative to*.
+        var beforePortable = AppPaths.HasUnimportedLegacyData(fakeBaseDir, null, fakeRoaming);
+        Console.WriteLine($"Not portable (no marker) -> HasUnimportedLegacyData is False: {!beforePortable}");
+
+        File.WriteAllText(Path.Combine(fakeBaseDir, "portable.flag"), "test marker");
+
+        var noLegacyVms = AppPaths.HasUnimportedLegacyData(fakeBaseDir, null, fakeRoaming);
+        Console.WriteLine($"Portable, but legacy vms/ is empty -> HasUnimportedLegacyData is False: {!noLegacyVms}");
+
+        var legacyDiskPath = Path.Combine(legacyDisksDir, "selftest-legacy-disk.qcow2");
+        File.WriteAllBytes(legacyDiskPath, new byte[1024]); // stand-in for a real disk image - content doesn't matter, only that it must NOT get copied
+        var legacyVmJson = $$"""
+        {
+          "Id": "selftest-legacy-vm",
+          "Name": "Legacy VM",
+          "Kind": "Qemu",
+          "DiskPath": "{{legacyDiskPath.Replace("\\", "\\\\")}}"
+        }
+        """;
+        File.WriteAllText(Path.Combine(legacyVmsDir, "selftest-legacy-vm.json"), legacyVmJson);
+        File.WriteAllText(Path.Combine(fakeRoaming, "QemuManager", "settings.json"), "{\"QemuDir\":\"C:\\\\legacy-qemu\"}");
+        File.WriteAllText(Path.Combine(legacyLogsDir, "crash-old.log"), "old crash");
+
+        var hasLegacy = AppPaths.HasUnimportedLegacyData(fakeBaseDir, null, fakeRoaming);
+        Console.WriteLine($"Portable, legacy vms/ has a VM, portable data/ doesn't exist yet -> HasUnimportedLegacyData is True: {hasLegacy}");
+
+        var overrideSet = AppPaths.HasUnimportedLegacyData(fakeBaseDir, "C:\\some\\override", fakeRoaming);
+        Console.WriteLine($"QEMUMANAGER_DATA_DIR override set -> never prompts regardless: {!overrideSet}");
+
+        var imported = AppPaths.ImportLegacyConfigs(fakeBaseDir, fakeRoaming);
+        Console.WriteLine($"ImportLegacyConfigs returned: {imported} (expected: 1)");
+
+        var portableVmsDir = Path.Combine(fakeBaseDir, "data", "vms");
+        var importedVmFile = Path.Combine(portableVmsDir, "selftest-legacy-vm.json");
+        Console.WriteLine($"VM config copied to portable data/vms: {File.Exists(importedVmFile)}");
+
+        var importedContents = File.Exists(importedVmFile) ? File.ReadAllText(importedVmFile) : "";
+        Console.WriteLine($"Copied VM's own DiskPath still points at the ORIGINAL (uncopied) legacy file: {importedContents.Contains(legacyDiskPath.Replace("\\", "\\\\"))}");
+
+        Console.WriteLine($"settings.json copied: {File.Exists(Path.Combine(fakeBaseDir, "data", "settings.json"))}");
+
+        var disksCopied = Directory.Exists(Path.Combine(fakeBaseDir, "data", "disks"));
+        Console.WriteLine($"disks/ NOT copied into the portable folder: {!disksCopied}");
+        var logsCopied = Directory.Exists(Path.Combine(fakeBaseDir, "data", "logs"));
+        Console.WriteLine($"logs/ NOT copied into the portable folder: {!logsCopied}");
+
+        // The portable data/ folder now exists, so this would no longer
+        // offer to import even if asked again - the same "don't ask
+        // twice" property the old automatic-copy-on-first-run had.
+        var afterImport = AppPaths.HasUnimportedLegacyData(fakeBaseDir, null, fakeRoaming);
+        Console.WriteLine($"After import, HasUnimportedLegacyData is False (data/ now exists): {!afterImport}");
+    }
+    finally
+    {
+        try { Directory.Delete(fakeBaseDir, recursive: true); } catch { }
+        try { Directory.Delete(fakeRoaming, recursive: true); } catch { }
+    }
+}
+
 Console.WriteLine("\n--- No DataGrid in the app is editable unless explicitly intended (bug: double-click on a cell crashed the app) ---");
 // A static check of the actual .xaml source, not a runtime/window check -
 // in keeping with "logic belongs in Core, tested without a window" even
