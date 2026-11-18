@@ -1,0 +1,21 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>QemuManager</RootNamespace>
+  </PropertyGroup>
+
+  <!-- The whole engine/business-logic layer now lives in its own project
+       (UHP.Core) specifically so a harness like this one - or a future web
+       backend or CLI - can reference it without dragging in WPF/WindowsBase
+       or the net8.0-windows TFM. This is a throwaway harness to verify the
+       control plane against real QEMU and riscv-emu; it is not part of the
+       shipped app. -->
+  <ItemGroup>
+    <ProjectReference Include="..\UHP.Core\UHP.Core.csproj" />
+  </ItemGroup>
+
+</Project>

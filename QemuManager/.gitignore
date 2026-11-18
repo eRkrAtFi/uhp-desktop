@@ -1,0 +1,8 @@
+bin/
+obj/
+*.user
+.vs/
+
+# package-portable.ps1's output - a real QEMU install bundled in (1GB+),
+# never belongs in git.
+/publish/

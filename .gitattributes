@@ -1,0 +1,10 @@
+# Deterministic line endings regardless of any individual clone's own
+# core.autocrlf setting - this repo is developed on Windows but its CI
+# (.github/workflows/ci.yml, release.yml) runs these shell scripts on a
+# Linux runner, where a stray \r in a shebang or script body can break
+# execution outright.
+* text=auto eol=lf
+*.sh text eol=lf
+*.ps1 text eol=lf
+*.png binary
+*.ico binary

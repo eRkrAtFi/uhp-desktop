@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      # Same as ci.yml - mingw/gcc builds riscv-emu.exe, qemu is the real
+      # install package-portable.ps1 then bundles wholesale into the
+      # portable zip (its default QemuDir, "C:\Program Files\qemu",
+      # matches exactly where choco installs it).
+      - name: Install build tools (gcc, QEMU)
+        run: choco install mingw qemu -y --no-progress
+        shell: pwsh
+
+      - name: Build riscv-emu
+        working-directory: riscv-emu
+        run: make
+        shell: bash
+
+      - name: Build the portable bundle
+        working-directory: QemuManager
+        run: .\package-portable.ps1
+        shell: pwsh
+
+      - name: Zip the portable bundle
+        working-directory: QemuManager
+        run: Compress-Archive -Path publish\* -DestinationPath UHP-Desktop-portable.zip
+        shell: pwsh
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: QemuManager/UHP-Desktop-portable.zip
+          generate_release_notes: true
+          # No riscv64 kernel/initramfs is attached here - see
+          # THIRD_PARTY.md for why; the portable bundle works for real
+          # QEMU VMs out of the box, and for riscv-emu VMs once a kernel
+          # is supplied separately (see README.md's "Quick start").

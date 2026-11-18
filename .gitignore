@@ -1,0 +1,69 @@
+# This repo's actual content is riscv-emu/ and QemuManager/ - everything
+# else in this workspace (other personal projects, installed third-party
+# tools, scratch files, screenshots) sits in the same parent folder but is
+# not part of it.
+/emu86/
+/rea/
+/tools/
+/files/
+/screenshoty/
+/testimages/
+/.claude/
+/qemu-w64-setup-*.exe
+/SETUP.md
+
+# --- .NET build output (QemuManager/UHP.Core/QemuManager.SelfTest) ---
+[Bb]in/
+[Oo]bj/
+*.user
+.vs/
+
+# The pre-refactor QemuManager history, kept locally but not carried
+# forward into this repo's own fresh history - see Step 1/4's own
+# decision. Renamed from .git (which git itself treats as a repo
+# boundary) to .git-old (which it does not), so it must be excluded
+# explicitly or its objects get swept in as ordinary tracked files.
+/QemuManager/.git-old/
+
+# Packaged/published output - a real publish (and, for the portable
+# variant, a bundled QEMU install) never belongs in git; see
+# publish-safely.sh/package-portable.ps1 for how it's produced instead.
+/QemuManager/publish/
+/QemuManager/publish_data_backup_*/
+
+# Portable mode's own data folder (VM configs, disks, settings - see
+# AppPaths.ResolveAppDataDir) and its marker, wherever they end up -
+# someone's real VMs must never land in this repo.
+**/data/
+portable.flag
+*.qcow2
+*.vmdk
+
+# Crash/app logs (see CrashLogger) - diagnostic, not source.
+logs/
+*.log
+
+# --- riscv-emu (C) build output - regenerate with `make` ---
+/riscv-emu/riscv-emu.exe
+/riscv-emu/build-*.out
+/riscv-emu/build-*.img
+/riscv-emu/tests/*.bin
+/riscv-emu/tests/*.elf
+/riscv-emu/tests/virtio_disk.img
+/riscv-emu/boot/echo_test.bin
+/riscv-emu/boot/echo_test.elf
+/riscv-emu/boot/firmware.elf
+/riscv-emu/boot/*.dtb
+/riscv-emu/boot/disk.img
+
+# Third-party guest images (Linux kernel, initramfs, Alpine minirootfs) -
+# GPL-licensed and/or too large for git; fetched on demand instead, see
+# scripts/fetch-guest-images.ps1 / .sh.
+/riscv-emu/boot/KernelImage
+/riscv-emu/boot/initramfs.cpio.gz
+/riscv-emu/tests/alpine-minirootfs.tar.gz
+
+# Ad-hoc debug scratch output from past manual debugging sessions - not
+# referenced by any test, script, or Makefile target.
+/riscv-emu/*.log
+/riscv-emu/live_chunk*.bin

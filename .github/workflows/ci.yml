@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # gcc (for riscv-emu.exe itself) and clang+llvm-objcopy (for the
+      # RISC-V guest test programs its own test suite compiles) - see
+      # THIRD_PARTY.md for why neither is ever bundled/shipped, only used
+      # here to build and test. qemu is the real qemu-system-riscv64
+      # `make compare`'s differential tests check riscv-emu's own output
+      # against. windows-latest's chocolatey is already installed; these
+      # three are not preinstalled on the image.
+      - name: Install build tools (gcc, LLVM, QEMU)
+        run: |
+          choco install mingw llvm qemu -y --no-progress
+        shell: pwsh
+
+      - name: Build riscv-emu
+        working-directory: riscv-emu
+        run: make
+        shell: bash
+
+      - name: riscv-emu unit test
+        working-directory: riscv-emu
+        run: make test
+        shell: bash
+
+      - name: riscv-emu differential test (vs real QEMU)
+        working-directory: riscv-emu
+        run: make compare
+        shell: bash
+
+      - name: riscv-emu fast suite (unit + differential + integration)
+        working-directory: riscv-emu
+        run: make test-all
+        shell: bash
+
+      # boot-test/interactive-test/fs-compare all need a real riscv64
+      # Linux kernel+initramfs via --kernel, which this repo deliberately
+      # does not ship or fetch yet - see THIRD_PARTY.md and
+      # scripts/fetch-guest-images.sh's own comment for why (no
+      # independently-verifiable source for the kernel/initramfs used
+      # during development; a from-scratch Buildroot replacement is in
+      # progress). Run the fetch script first (it gets Alpine's own
+      # minirootfs, which *does* have a verified source, for free) and
+      # skip the kernel-dependent tests with a clear message rather than
+      # silently omitting them from this workflow.
+      - name: Fetch guest images (where a verified source exists)
+        working-directory: riscv-emu
+        run: bash scripts/fetch-guest-images.sh
+        shell: bash
+
+      - name: Kernel-dependent tests (boot-test/interactive-test/fs-compare)
+        working-directory: riscv-emu
+        run: |
+          if [ -f boot/KernelImage ] && [ -f boot/initramfs.cpio.gz ]; then
+            make boot-test
+            make interactive-test
+            make fs-compare
+          else
+            echo "::warning::Skipping boot-test/interactive-test/fs-compare - boot/KernelImage and boot/initramfs.cpio.gz are not available (no verified source yet; see THIRD_PARTY.md). This is expected, not a failure."
+          fi
+        shell: bash
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Build UHP.Core + QemuManager.SelfTest
+        working-directory: QemuManager
+        run: dotnet build QemuManager.SelfTest/QemuManager.SelfTest.csproj -c Release
+
+      - name: Build QemuManager (WPF)
+        working-directory: QemuManager
+        run: dotnet build QemuManager/QemuManager.csproj -c Release
+
+      # choco's qemu installs under "C:\Program Files\qemu" by default,
+      # matching AppSettings' own fallback default - no path override
+      # needed here, same as a real user's default install.
+      - name: Run QemuManager.SelfTest
+        working-directory: QemuManager
+        run: dotnet QemuManager.SelfTest/bin/Release/net8.0/QemuManager.SelfTest.dll "C:\Program Files\qemu" "..\riscv-emu"
+        shell: pwsh

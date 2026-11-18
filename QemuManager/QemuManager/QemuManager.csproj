@@ -1,0 +1,46 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <!-- Only for System.Windows.Forms.FolderBrowserDialog; the UI itself stays WPF. -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <!-- AssemblyName/RootNamespace deliberately left as QemuManager for now -
+         this is the cosmetic/UI-facing layer of the rebranding brainstorm
+         (see README.md), not the full technical rename across namespaces,
+         project/folder names and docs. -->
+    <AssemblyName>QemuManager</AssemblyName>
+    <RootNamespace>QemuManager</RootNamespace>
+    <Product>Universal Hypervisor Platform (UHP)</Product>
+    <AssemblyTitle>UHP Desktop</AssemblyTitle>
+    <ApplicationIcon>Assets\uhp.ico</ApplicationIcon>
+    <!-- Self-contained single-file publish: the point is a standalone .exe
+         that needs no separately-installed .NET runtime on the target
+         machine. QEMU itself remains an external dependency, located at
+         run time rather than bundled. -->
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <!-- WPF's own binding/culture plumbing needs real ICU data; invariant
+         globalization breaks XmlLanguage lookups used by every binding. -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\UHP.Core\UHP.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- ApplicationIcon above only embeds this into the .exe's own Win32
+         resources (Explorer/taskbar/Alt+Tab icon) - it is a separate asset
+         from the app's own runtime resources, so a WPF window binding its
+         own Icon property to "pack://application:,,,/Assets/uhp.ico"
+         (see App.xaml's shared Window style) needs it included here too. -->
+    <Resource Include="Assets\uhp.ico" />
+  </ItemGroup>
+
+</Project>

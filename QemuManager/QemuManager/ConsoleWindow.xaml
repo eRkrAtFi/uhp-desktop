@@ -1,0 +1,45 @@
+<Window x:Class="QemuManager.ConsoleWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="riscv-emu console" Height="520" Width="800" MinHeight="300" MinWidth="500"
+        Background="{StaticResource WindowBg}">
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Background="{StaticResource CardBg}" Padding="10" BorderBrush="{StaticResource CardBorder}" BorderThickness="0,0,0,1">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock x:Name="TitleText" Text="riscv-emu" VerticalAlignment="Center" Margin="0,0,16,0" FontWeight="Bold"/>
+                <Button x:Name="ForceStopButton" Content="Force Stop" Click="ForceStopButton_Click" Background="{StaticResource DangerBg}"/>
+                <!-- Same byte SendCtrlC below sends on Ctrl+C from the
+                     keyboard (see TerminalKeyDown) - a button too because
+                     a touch/mouse-only user, or one who does not know the
+                     shortcut exists yet, has no other way to interrupt a
+                     runaway guest command like a stuck `ping` before
+                     Phase 5's real terminal exists. -->
+                <Button x:Name="SendCtrlCButton" Content="Send Ctrl+C" Click="SendCtrlCButton_Click"/>
+                <Button x:Name="ClearButton" Content="Clear" Click="ClearButton_Click"/>
+            </StackPanel>
+        </Border>
+
+        <Border DockPanel.Dock="Bottom" Background="{StaticResource PanelBg}" Padding="10" BorderBrush="{StaticResource CardBorder}" BorderThickness="0,1,0,0">
+            <StackPanel>
+                <TextBlock x:Name="InputHintText"
+                           FontSize="11" Opacity="0.6" Margin="0,0,0,6" TextWrapping="Wrap"/>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBox x:Name="InputBox" Grid.Column="0" Margin="0" Padding="6" FontFamily="Consolas"
+                             KeyDown="InputBox_KeyDown" PreviewKeyDown="TerminalKeyDown"
+                             AutomationProperties.Name="Console input"/>
+                    <Button x:Name="SendButton" Grid.Column="1" Content="Send" Click="SendButton_Click" Margin="8,0,0,0"/>
+                </Grid>
+            </StackPanel>
+        </Border>
+
+        <TextBox x:Name="OutputBox" Margin="0" BorderThickness="0" Background="#0C0C0C" Foreground="#D0D0D0"
+                 FontFamily="Consolas" FontSize="13" IsReadOnly="True" TextWrapping="NoWrap"
+                 VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                 PreviewKeyDown="TerminalKeyDown"
+                 AutomationProperties.Name="Console output"/>
+    </DockPanel>
+</Window>

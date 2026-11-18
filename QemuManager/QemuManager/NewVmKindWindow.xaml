@@ -1,0 +1,35 @@
+<Window x:Class="QemuManager.NewVmKindWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="New VM" Height="220" Width="420" WindowStartupLocation="CenterOwner"
+        Background="{StaticResource WindowBg}" ResizeMode="NoResize">
+    <Window.Resources>
+        <!-- Just this window's own tweak to the shared Button style
+             (App.xaml) - bigger, left-aligned, stacked vertically instead
+             of the shared style's default compact/centered toolbar look. -->
+        <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Padding" Value="12,10"/>
+            <Setter Property="Margin" Value="0,0,0,10"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+        </Style>
+    </Window.Resources>
+    <StackPanel Margin="16">
+        <TextBlock Text="What kind of VM do you want to create?" Margin="0,0,0,12" FontWeight="Bold"/>
+
+        <Button x:Name="QemuButton" Click="QemuButton_Click" AutomationProperties.Name="Create QEMU VM">
+            <StackPanel>
+                <TextBlock Text="QEMU" FontWeight="Bold"/>
+                <TextBlock Text="A real virtual machine driven by qemu-system-*.exe - any architecture, any OS." FontSize="11" Opacity="0.8" TextWrapping="Wrap"/>
+            </StackPanel>
+        </Button>
+
+        <Button x:Name="RiscvEmuButton" Click="RiscvEmuButton_Click" AutomationProperties.Name="Create riscv-emu VM">
+            <StackPanel>
+                <TextBlock Text="riscv-emu" FontWeight="Bold"/>
+                <TextBlock Text="This project's own hand-written RISC-V emulator - boots a riscv64 Linux Image + initramfs." FontSize="11" Opacity="0.8" TextWrapping="Wrap"/>
+            </StackPanel>
+        </Button>
+
+        <Button x:Name="CancelButton" Content="Cancel" Click="CancelButton_Click" HorizontalContentAlignment="Center"/>
+    </StackPanel>
+</Window>

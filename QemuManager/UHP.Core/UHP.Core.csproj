@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The whole business-logic/engine layer, deliberately with no
+       dependency on WPF, System.Windows, or anything else Windows-desktop-
+       specific: VM configuration, persistence, the QEMU/riscv-emu process
+       engines, QMP, disk image creation, settings, runtime-reattach state.
+       A future web backend or CLI references this project the exact same
+       way the WPF app and QemuManager.SelfTest do - neither has to change
+       for that to become possible, only a new host needs to be added.
+
+       Namespaces here are still "QemuManager.*", not "UHP.Core.*" - this
+       project split is about *where the code lives* (so nothing WPF-
+       specific can creep in here, and a future host has one clean thing to
+       reference), not a rename; renaming the namespace too is its own,
+       separate, purely cosmetic change this refactor deliberately does not
+       bundle in, to keep this step behavior-preserving and low-risk. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>
