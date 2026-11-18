@@ -142,8 +142,11 @@ integration: $(BIN) tests/integration_sbi.bin boot/firmware.bin
 # what's actually being compared, so this checks the tail of each side's
 # output rather than a full diff the way compare/virtio-compare do.
 #
-# tr -d '\r' on both sides before the diff: real QEMU's own OpenSBI
-# console driver terminates its lines CRLF (ordinary real-UART-console
+# sed 's/\r$//' on both sides before the diff - strips only a trailing
+# \r (the CRLF-end-of-line case), not every \r anywhere in the line, so
+# a \r that was ever part of real content rather than a line ending
+# would still show up as a mismatch. Real QEMU's own OpenSBI console
+# driver terminates its lines CRLF (ordinary real-UART-console
 # behavior), tests/integration_sbi.S's own payload writes plain "OK\n" -
 # a trailing \r is exactly the same kind of each-side's-own-firmware
 # noise the comment above already tolerates everywhere else, just
@@ -165,7 +168,7 @@ integration-compare: $(BIN) tests/integration_sbi.elf tests/integration_sbi.bin 
 		> build-integration-qemu.out 2>/dev/null
 	@tail -n 1 build-integration-riscv-emu.out
 	@tail -n 1 build-integration-qemu.out
-	@diff <(tail -n 1 build-integration-riscv-emu.out | tr -d '\r') <(tail -n 1 build-integration-qemu.out | tr -d '\r') \
+	@diff <(tail -n 1 build-integration-riscv-emu.out | sed 's/\r$$//') <(tail -n 1 build-integration-qemu.out | sed 's/\r$$//') \
 		&& echo "riscv-emu matches QEMU (SBI dispatch, both via their own firmware)"
 
 # --- Boot and interactive tests: boot/boot_test.sh and

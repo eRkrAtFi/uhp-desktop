@@ -446,6 +446,58 @@
             </Setter>
         </Style>
 
+        <!-- A thin, flat dark scrollbar everywhere (ScrollViewer's built-in
+             one, every dialog's own, the DataGrid's) - previously
+             completely unstyled, so it fell back to the OS's own light
+             chrome, standing out sharply against every dark window/dialog
+             around it (visible on VmEditWindow's own ScrollViewer in
+             docs/screenshot.png). No arrow buttons at either end -
+             deliberately a modern flat thumb-on-a-track look matching the
+             rest of this app's own styling, not a reproduction of classic
+             Win32 scrollbar chrome. -->
+        <Style x:Key="ScrollBarThumb" TargetType="Thumb">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Thumb">
+                        <Border Background="{StaticResource CardBorder}" CornerRadius="3" Margin="2"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="ScrollBar">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Width" Value="12"/>
+            <Setter Property="MinWidth" Value="12"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ScrollBar">
+                        <Grid Background="{TemplateBinding Background}">
+                            <Track x:Name="PART_Track" IsDirectionReversed="True">
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton Command="ScrollBar.PageUpCommand" Opacity="0" Focusable="False"/>
+                                </Track.DecreaseRepeatButton>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton Command="ScrollBar.PageDownCommand" Opacity="0" Focusable="False"/>
+                                </Track.IncreaseRepeatButton>
+                                <Track.Thumb>
+                                    <Thumb Style="{StaticResource ScrollBarThumb}"/>
+                                </Track.Thumb>
+                            </Track>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="Orientation" Value="Horizontal">
+                                <Setter Property="Width" Value="Auto"/>
+                                <Setter Property="Height" Value="12"/>
+                                <Setter Property="MinWidth" Value="0"/>
+                                <Setter Property="MinHeight" Value="12"/>
+                                <Setter TargetName="PART_Track" Property="IsDirectionReversed" Value="False"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style TargetType="GridSplitter">
             <Setter Property="Background" Value="{StaticResource CardBorder}"/>
             <Setter Property="Height" Value="4"/>

@@ -882,4 +882,43 @@ Console.WriteLine("\n--- VM tree nodes have a real accessible name, not ToString
     }
 }
 
+Console.WriteLine("\n--- NoResize dialogs must not have a fixed Height (content can get clipped with no way to resize or scroll into view) ---");
+// Found the hard way: NewVmKindWindow had Height="220" + ResizeMode="NoResize"
+// with content (two multi-line buttons + Cancel) that genuinely needs
+// more - the riscv-emu option's own description text was cut off and
+// Cancel was not visible at all. SizeToContent="Height" (the fix applied
+// to every dialog below) makes the window grow to fit its own content
+// instead of silently clipping it; a dialog that could still exceed a
+// short screen also gets a ScrollViewer plus a MaxHeight cap (VmEditWindow,
+// RiscvEmuEditWindow) as a second line of defense. This check is static,
+// for the same reason as the DataGrid/TreeViewItem checks above - the
+// point is that something keeps checking this automatically, not that it
+// needs a live window to be meaningful (an actually-rendered layout check
+// would need QemuManager.SelfTest to reference the WPF project itself,
+// which it deliberately does not today).
+{
+    var wpfProjectDir = args.Length > 2 ? args[2] : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "QemuManager"));
+    if (!Directory.Exists(wpfProjectDir))
+    {
+        Console.WriteLine($"WPF project directory not found at '{wpfProjectDir}' - skipping.");
+    }
+    else
+    {
+        XNamespace xaml = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
+        var dialogFiles = new[] { "NewVmKindWindow.xaml", "SettingsWindow.xaml", "CreateDiskWindow.xaml", "VmEditWindow.xaml", "RiscvEmuEditWindow.xaml" };
+        foreach (var name in dialogFiles)
+        {
+            var path = Path.Combine(wpfProjectDir, name);
+            if (!File.Exists(path)) { Console.WriteLine($"{name}: not found - skipping"); continue; }
+            var doc = XDocument.Load(path);
+            var window = doc.Root!;
+            var isNoResize = (string?)window.Attribute("ResizeMode") == "NoResize";
+            var hasFixedHeight = window.Attribute("Height") != null;
+            var hasSizeToContent = ((string?)window.Attribute("SizeToContent"))?.Contains("Height") == true;
+            var ok = !isNoResize || (!hasFixedHeight && hasSizeToContent);
+            Console.WriteLine($"{name}: NoResize={isNoResize}, fixed Height={hasFixedHeight}, SizeToContent includes Height={hasSizeToContent} -> {(ok ? "OK" : "FAIL - NoResize with a fixed Height can clip content with no way to see the rest")}");
+        }
+    }
+}
+
 Console.WriteLine("\nDone.");

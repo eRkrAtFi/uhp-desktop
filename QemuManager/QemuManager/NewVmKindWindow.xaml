@@ -1,7 +1,7 @@
 <Window x:Class="QemuManager.NewVmKindWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="New VM" Height="220" Width="420" WindowStartupLocation="CenterOwner"
+        Title="New VM" SizeToContent="Height" Width="420" WindowStartupLocation="CenterOwner"
         Background="{StaticResource WindowBg}" ResizeMode="NoResize">
     <Window.Resources>
         <!-- Just this window's own tweak to the shared Button style

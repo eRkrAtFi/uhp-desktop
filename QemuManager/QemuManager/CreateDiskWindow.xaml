@@ -1,7 +1,7 @@
 <Window x:Class="QemuManager.CreateDiskWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="New Disk Image" Height="220" Width="480" WindowStartupLocation="CenterOwner"
+        Title="New Disk Image" SizeToContent="Height" Width="480" WindowStartupLocation="CenterOwner"
         Background="{StaticResource WindowBg}" ResizeMode="NoResize">
     <Window.Resources>
         <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">

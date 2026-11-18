@@ -1,7 +1,7 @@
 <Window x:Class="QemuManager.RiscvEmuEditWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="riscv-emu VM Configuration" Height="500" Width="560" WindowStartupLocation="CenterOwner"
+        Title="riscv-emu VM Configuration" SizeToContent="Height" MaxHeight="900" Width="560" WindowStartupLocation="CenterOwner"
         Background="{StaticResource WindowBg}" ResizeMode="NoResize">
     <Window.Resources>
         <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
@@ -20,15 +20,28 @@
             <Button x:Name="CancelButton" Content="Cancel" Click="CancelButton_Click"/>
         </StackPanel>
 
+        <!-- Wrapped in a ScrollViewer, same safety net VmEditWindow already
+             has, for the same reason: with SizeToContent="Height" capped
+             by MaxHeight, content that would exceed MaxHeight on an
+             unusually short screen needs somewhere to go rather than
+             being silently clipped with no way to reach it (NoResize
+             means no resize handles either). Every row below is now
+             explicit Height="Auto" rather than the previous unqualified
+             (implicitly "*") RowDefinitions - star sizing needs a finite
+             height to divide proportionally, which a ScrollViewer does
+             not offer its content (it offers infinite height), so star
+             rows inside one do not reliably size to their own content at
+             all. -->
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
         <Grid>
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="110"/>
+                <ColumnDefinition Width="130"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
             <Grid.RowDefinitions>
-                <RowDefinition/> <RowDefinition/> <RowDefinition/>
-                <RowDefinition/> <RowDefinition/> <RowDefinition/>
-                <RowDefinition/> <RowDefinition/> <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/> <RowDefinition Height="Auto"/> <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/> <RowDefinition Height="Auto"/> <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/> <RowDefinition Height="Auto"/> <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
             <TextBlock Grid.Row="0" Grid.Column="0" Text="Name"/>
@@ -98,5 +111,6 @@
 
             <TextBlock x:Name="ValidationText" Grid.Row="8" Grid.Column="1" Foreground="{StaticResource ErrorText}" TextWrapping="Wrap"/>
         </Grid>
+        </ScrollViewer>
     </DockPanel>
 </Window>
