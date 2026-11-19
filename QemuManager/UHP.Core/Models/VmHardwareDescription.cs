@@ -15,4 +15,12 @@ public record VmHardwareDescription(
     string DiskDescription,
     string NetworkDescription,
     string ConsoleDescription,
-    string AcceleratorDescription);
+    string AcceleratorDescription,
+    /// <summary>Whether this engine can report a live guest-reported state
+    /// detail beyond its own run state (QEMU: QMP's query-status, e.g.
+    /// "running"/"paused" - riscv-emu has no equivalent control channel,
+    /// so this is false there). The VM detail page's own "Guest Detail
+    /// (QMP)" tile binds its Visibility to this, not to Kind directly -
+    /// an engine's own capabilities belong here, in one place, not
+    /// re-decided in XAML on a per-engine basis.</summary>
+    bool SupportsGuestDetail);

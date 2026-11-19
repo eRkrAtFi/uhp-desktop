@@ -1,5 +1,6 @@
 using System;
 using System.ComponentModel;
+using System.IO;
 using QemuManager.Services;
 using Brush = System.Windows.Media.Brush;
 using SolidColorBrush = System.Windows.Media.SolidColorBrush;
@@ -47,6 +48,18 @@ public class VmListItem : INotifyPropertyChanged
     public string MemoryMB => Config.MemoryMB.ToString();
     public string CpuCores => Hardware.CpuDescription;
     public string Accelerator => Hardware.AcceleratorDescription;
+
+    /// <summary>The "General" card's own two fields that are plain
+    /// VmConfig facts, not anything IVmService needs to compute - local
+    /// time, not UTC, matching how every other timestamp-ish thing in
+    /// this app (Recent Tasks' own entries) is already displayed.</summary>
+    public string CreatedText => Config.CreatedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+
+    /// <summary>Where this VM's own config JSON lives on disk - VmStore's
+    /// own file-naming convention (AppPaths.VmsDir\&lt;Id&gt;.json), surfaced
+    /// here since VmStore itself does not expose it and the "General"
+    /// card has nowhere else sensible to ask.</summary>
+    public string ConfigFilePath => Path.Combine(AppPaths.VmsDir, Config.Id + ".json");
 
     private VmState _state = VmState.Stopped;
     /// <summary>Set from IVmService.GetState - the engine-agnostic enum,

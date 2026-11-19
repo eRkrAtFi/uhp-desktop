@@ -108,6 +108,22 @@ public interface IVmService : IConsoleSource
     /// just a UI nicety on top of it.</summary>
     bool IsActionInProgress(string vmId);
 
+    // --- History (Phase 3's Performance/Console-preview cards) - kept
+    // here, fed continuously regardless of whether any window is open
+    // to look at it, not recomputed/re-captured only once a window
+    // happens to ask - see VmService's own remarks on each. ---
+
+    /// <summary>Up to the last hour of host-CPU% samples for this VM,
+    /// oldest first.</summary>
+    IReadOnlyList<CpuSample> GetCpuHistory(string vmId);
+
+    /// <summary>Everything captured on this VM's console since its
+    /// current run started.</summary>
+    string GetConsoleBuffer(string vmId);
+
+    /// <summary>The last few lines of <see cref="GetConsoleBuffer"/>.</summary>
+    string GetConsolePreview(string vmId, int lines = 15);
+
     // --- Events ---
 
     /// <summary>Raised whenever any VM's run state changes, for either

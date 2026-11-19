@@ -142,8 +142,24 @@
                                  caused visibly (see App.xaml's own history)
                                  but here only audible/inspectable, not seen
                                  on screen at all. -->
+                            <!-- BasedOn the shared TreeViewItem style (App.xaml)
+                                 is load-bearing, not cosmetic: without it, this
+                                 ItemContainerStyle *replaces* that style for
+                                 every VM row instead of adding to it, falling
+                                 back to WPF's own stock TreeViewItem template -
+                                 whose selected-row highlight uses
+                                 SystemColors.InactiveSelectionHighlightBrush
+                                 once the window itself loses focus, rendering
+                                 as near-white text on a near-white row with
+                                 the VM's name effectively invisible. Found via
+                                 screenshot with the main window deliberately
+                                 defocused (Notepad opened on top) - the shared
+                                 style's own IsSelected-only trigger (not
+                                 IsSelectionActive) is exactly what the other,
+                                 statically-declared tree nodes already get for
+                                 free, and VM rows must too. -->
                             <TreeViewItem.ItemContainerStyle>
-                                <Style TargetType="TreeViewItem">
+                                <Style TargetType="TreeViewItem" BasedOn="{StaticResource {x:Type TreeViewItem}}">
                                     <Setter Property="AutomationProperties.Name" Value="{Binding Name}"/>
                                 </Style>
                             </TreeViewItem.ItemContainerStyle>
@@ -297,58 +313,171 @@
 
                         <ScrollViewer VerticalScrollBarVisibility="Auto">
                             <StackPanel Margin="32">
-                                <!-- Summary tiles: the same live numbers the grid's own columns show,
-                                     just larger - plus Speed (MIPS), which the grid has no room for and
-                                     which only ever has a value for riscv-emu (MipsText is "-" for a
-                                     QEMU VM, the same "not applicable while not running" convention
-                                     every other tile already uses), and the QMP-only GuestDetail text
-                                     this page exists partly to give a home to (see VmListItem's own
-                                     remarks on why the grid no longer folds it into Status). -->
-                                <StackPanel Orientation="Horizontal" Margin="0,0,0,20">
-                                    <Border Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" Padding="14,10" Margin="0,0,10,0" MinWidth="110">
+                                <!-- Running: the same live numbers the grid's own columns show, just
+                                     larger - plus Speed (MIPS, riscv-emu only - MipsText is "-" for a
+                                     QEMU VM, the same "not applicable" convention every tile already
+                                     uses) and Guest Detail (QMP-only - Visibility bound to
+                                     Hardware.SupportsGuestDetail, not Kind, so a future third engine
+                                     only has to set that one flag correctly, not get found and fixed
+                                     here too). -->
+                                <StackPanel Visibility="{Binding IsRunning, Converter={StaticResource BoolToVis}}">
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,20">
+                                        <Border Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" Padding="14,10" Margin="0,0,10,0" MinWidth="110">
+                                            <StackPanel>
+                                                <TextBlock Text="Host CPU" FontSize="11" Foreground="{StaticResource TextDim}"/>
+                                                <TextBlock Text="{Binding CpuPercentText}" FontSize="18" FontWeight="Bold"/>
+                                            </StackPanel>
+                                        </Border>
+                                        <Border Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" Padding="14,10" Margin="0,0,10,0" MinWidth="110">
+                                            <StackPanel>
+                                                <TextBlock Text="Host Memory" FontSize="11" Foreground="{StaticResource TextDim}"/>
+                                                <TextBlock Text="{Binding MemoryUsageText}" FontSize="18" FontWeight="Bold"/>
+                                            </StackPanel>
+                                        </Border>
+                                        <Border Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" Padding="14,10" Margin="0,0,10,0" MinWidth="110">
+                                            <StackPanel>
+                                                <TextBlock Text="Uptime" FontSize="11" Foreground="{StaticResource TextDim}"/>
+                                                <TextBlock Text="{Binding UptimeText}" FontSize="18" FontWeight="Bold"/>
+                                            </StackPanel>
+                                        </Border>
+                                        <Border Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" Padding="14,10" Margin="0,0,10,0" MinWidth="110">
+                                            <StackPanel>
+                                                <TextBlock Text="Speed" FontSize="11" Foreground="{StaticResource TextDim}"/>
+                                                <TextBlock Text="{Binding MipsText}" FontSize="18" FontWeight="Bold"/>
+                                            </StackPanel>
+                                        </Border>
+                                        <Border Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" Padding="14,10" MinWidth="140"
+                                                Visibility="{Binding Hardware.SupportsGuestDetail, Converter={StaticResource BoolToVis}}">
+                                            <StackPanel>
+                                                <TextBlock Text="Guest Detail (QMP)" FontSize="11" Foreground="{StaticResource TextDim}"/>
+                                                <TextBlock Text="{Binding GuestDetail}" FontSize="18" FontWeight="Bold"/>
+                                            </StackPanel>
+                                        </Border>
+                                    </StackPanel>
+
+                                    <TextBlock Text="Performance" FontSize="16" FontWeight="Bold" Margin="0,0,0,8"/>
+                                    <Border Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" Padding="16" Margin="0,0,0,20">
                                         <StackPanel>
-                                            <TextBlock Text="Host CPU" FontSize="11" Foreground="{StaticResource TextDim}"/>
-                                            <TextBlock Text="{Binding CpuPercentText}" FontSize="18" FontWeight="Bold"/>
-                                        </StackPanel>
-                                    </Border>
-                                    <Border Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" Padding="14,10" Margin="0,0,10,0" MinWidth="110">
-                                        <StackPanel>
-                                            <TextBlock Text="Host Memory" FontSize="11" Foreground="{StaticResource TextDim}"/>
-                                            <TextBlock Text="{Binding MemoryUsageText}" FontSize="18" FontWeight="Bold"/>
-                                        </StackPanel>
-                                    </Border>
-                                    <Border Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" Padding="14,10" Margin="0,0,10,0" MinWidth="110">
-                                        <StackPanel>
-                                            <TextBlock Text="Uptime" FontSize="11" Foreground="{StaticResource TextDim}"/>
-                                            <TextBlock Text="{Binding UptimeText}" FontSize="18" FontWeight="Bold"/>
-                                        </StackPanel>
-                                    </Border>
-                                    <Border Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" Padding="14,10" Margin="0,0,10,0" MinWidth="110">
-                                        <StackPanel>
-                                            <TextBlock Text="Speed" FontSize="11" Foreground="{StaticResource TextDim}"/>
-                                            <TextBlock Text="{Binding MipsText}" FontSize="18" FontWeight="Bold"/>
-                                        </StackPanel>
-                                    </Border>
-                                    <Border Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" Padding="14,10" MinWidth="140">
-                                        <StackPanel>
-                                            <TextBlock Text="Guest Detail (QMP)" FontSize="11" Foreground="{StaticResource TextDim}"/>
-                                            <TextBlock Text="{Binding GuestDetail}" FontSize="18" FontWeight="Bold"/>
+                                            <TextBlock Text="Host CPU, last hour" FontSize="11" Foreground="{StaticResource TextDim}" Margin="0,0,0,8"/>
+                                            <!-- Points set in code-behind (RedrawCpuHistory) from
+                                                 IVmService.GetCpuHistory - a plain WPF app has no
+                                                 charting control built in, and this is one line, not
+                                                 worth a library dependency for. Fixed height; width
+                                                 follows the card via Stretch, scaled to
+                                                 CpuHistoryCanvas.ActualWidth at draw time. -->
+                                            <Canvas x:Name="CpuHistoryCanvas" Height="100" ClipToBounds="True" SizeChanged="CpuHistoryCanvas_SizeChanged">
+                                                <Polyline x:Name="CpuHistoryLine" Stroke="{StaticResource Accent}" StrokeThickness="2"/>
+                                            </Canvas>
                                         </StackPanel>
                                     </Border>
                                 </StackPanel>
 
-                                <TextBlock Text="Hardware" FontSize="16" FontWeight="Bold" Margin="0,0,0,8"/>
-                                <Border Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" Padding="16">
-                                    <StackPanel>
-                                        <TextBlock Margin="0,0,0,6"><Run Text="Engine: " Foreground="{StaticResource TextDim}"/><Run Text="{Binding Hardware.EngineDisplayName}"/></TextBlock>
-                                        <TextBlock Margin="0,0,0,6"><Run Text="Architecture: " Foreground="{StaticResource TextDim}"/><Run Text="{Binding Hardware.Architecture}"/></TextBlock>
-                                        <TextBlock Margin="0,0,0,6"><Run Text="CPU: " Foreground="{StaticResource TextDim}"/><Run Text="{Binding Hardware.CpuDescription}"/></TextBlock>
-                                        <TextBlock Margin="0,0,0,6"><Run Text="Memory: " Foreground="{StaticResource TextDim}"/><Run Text="{Binding Hardware.MemoryDescription}"/></TextBlock>
-                                        <TextBlock Margin="0,0,0,6"><Run Text="Disk: " Foreground="{StaticResource TextDim}"/><Run Text="{Binding Hardware.DiskDescription}"/></TextBlock>
-                                        <TextBlock Margin="0,0,0,6"><Run Text="Network: " Foreground="{StaticResource TextDim}"/><Run Text="{Binding Hardware.NetworkDescription}"/></TextBlock>
-                                        <TextBlock Margin="0,0,0,6"><Run Text="Console: " Foreground="{StaticResource TextDim}"/><Run Text="{Binding Hardware.ConsoleDescription}"/></TextBlock>
-                                        <TextBlock><Run Text="Accelerator: " Foreground="{StaticResource TextDim}"/><Run Text="{Binding Hardware.AcceleratorDescription}"/></TextBlock>
+                                <!-- Stopped: no live stats exist, so show what IS still true (the
+                                     VM's own configuration) instead of a wall of "-" tiles that used
+                                     to be here, plus an explicit "no data" graph rather than an empty
+                                     one that could be mistaken for "really was 0% the whole time". -->
+                                <StackPanel Visibility="{Binding IsRunning, Converter={StaticResource InverseBoolToVis}}">
+                                    <TextBlock Text="This VM is stopped - showing its configuration, not live stats." Foreground="{StaticResource TextDim}" Margin="0,0,0,12" TextWrapping="Wrap"/>
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,20">
+                                        <Border Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" Padding="14,10" Margin="0,0,10,0" MinWidth="110">
+                                            <StackPanel>
+                                                <TextBlock Text="CPU" FontSize="11" Foreground="{StaticResource TextDim}"/>
+                                                <TextBlock Text="{Binding Hardware.CpuDescription}" FontSize="16" FontWeight="Bold"/>
+                                            </StackPanel>
+                                        </Border>
+                                        <Border Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" Padding="14,10" Margin="0,0,10,0" MinWidth="110">
+                                            <StackPanel>
+                                                <TextBlock Text="Memory" FontSize="11" Foreground="{StaticResource TextDim}"/>
+                                                <TextBlock Text="{Binding Hardware.MemoryDescription}" FontSize="16" FontWeight="Bold"/>
+                                            </StackPanel>
+                                        </Border>
+                                        <Border Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" Padding="14,10" Margin="0,0,10,0" MinWidth="140">
+                                            <StackPanel>
+                                                <TextBlock Text="Disk" FontSize="11" Foreground="{StaticResource TextDim}"/>
+                                                <TextBlock Text="{Binding Hardware.DiskDescription}" FontSize="16" FontWeight="Bold" TextWrapping="Wrap"/>
+                                            </StackPanel>
+                                        </Border>
+                                        <Border Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" Padding="14,10" MinWidth="140">
+                                            <StackPanel>
+                                                <TextBlock Text="Network" FontSize="11" Foreground="{StaticResource TextDim}"/>
+                                                <TextBlock Text="{Binding Hardware.NetworkDescription}" FontSize="16" FontWeight="Bold"/>
+                                            </StackPanel>
+                                        </Border>
                                     </StackPanel>
+
+                                    <TextBlock Text="Performance" FontSize="16" FontWeight="Bold" Margin="0,0,0,8"/>
+                                    <Border Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" Padding="16" Height="100" Margin="0,0,0,20">
+                                        <TextBlock Text="No data while stopped" Foreground="{StaticResource TextDim}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                </StackPanel>
+
+                                <TextBlock Text="General" FontSize="16" FontWeight="Bold" Margin="0,0,0,8"/>
+                                <Border Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" Padding="16" Margin="0,0,0,20">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="140"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/> <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/> <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Engine" Foreground="{StaticResource TextDim}" Margin="0,0,0,8"/>
+                                        <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding Hardware.EngineDisplayName}" Margin="0,0,0,8"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Architecture" Foreground="{StaticResource TextDim}" Margin="0,0,0,8"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding Architecture}" Margin="0,0,0,8"/>
+                                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Created" Foreground="{StaticResource TextDim}" Margin="0,0,0,8"/>
+                                        <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding CreatedText}" Margin="0,0,0,8"/>
+                                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Config file" Foreground="{StaticResource TextDim}" Margin="0,0,0,8"/>
+                                        <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding ConfigFilePath}" Margin="0,0,0,8" TextWrapping="Wrap"/>
+                                        <TextBlock Grid.Row="4" Grid.Column="0" Text="Guest state (QMP)" Foreground="{StaticResource TextDim}"
+                                                   Visibility="{Binding Hardware.SupportsGuestDetail, Converter={StaticResource BoolToVis}}"/>
+                                        <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding GuestDetail}"
+                                                   Visibility="{Binding Hardware.SupportsGuestDetail, Converter={StaticResource BoolToVis}}"/>
+                                    </Grid>
+                                </Border>
+
+                                <TextBlock Text="Hardware" FontSize="16" FontWeight="Bold" Margin="0,0,0,8"/>
+                                <Border Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" Padding="16" Margin="0,0,0,20">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="140"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/> <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/> <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/> <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Engine" Foreground="{StaticResource TextDim}" Margin="0,0,0,6"/>
+                                        <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding Hardware.EngineDisplayName}" Margin="0,0,0,6"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Architecture" Foreground="{StaticResource TextDim}" Margin="0,0,0,6"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding Hardware.Architecture}" Margin="0,0,0,6"/>
+                                        <TextBlock Grid.Row="2" Grid.Column="0" Text="CPU" Foreground="{StaticResource TextDim}" Margin="0,0,0,6"/>
+                                        <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding Hardware.CpuDescription}" Margin="0,0,0,6"/>
+                                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Memory" Foreground="{StaticResource TextDim}" Margin="0,0,0,6"/>
+                                        <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding Hardware.MemoryDescription}" Margin="0,0,0,6"/>
+                                        <TextBlock Grid.Row="4" Grid.Column="0" Text="Disk" Foreground="{StaticResource TextDim}" Margin="0,0,0,6"/>
+                                        <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding Hardware.DiskDescription}" Margin="0,0,0,6" TextWrapping="Wrap"/>
+                                        <TextBlock Grid.Row="5" Grid.Column="0" Text="Network" Foreground="{StaticResource TextDim}" Margin="0,0,0,6"/>
+                                        <TextBlock Grid.Row="5" Grid.Column="1" Text="{Binding Hardware.NetworkDescription}" Margin="0,0,0,6"/>
+                                        <TextBlock Grid.Row="6" Grid.Column="0" Text="Console" Foreground="{StaticResource TextDim}"/>
+                                        <TextBlock Grid.Row="6" Grid.Column="1" Text="{Binding Hardware.ConsoleDescription}"/>
+                                    </Grid>
+                                </Border>
+
+                                <!-- Last ~15 lines, continuously captured in Core regardless of
+                                     whether a ConsoleWindow is open (see IVmService.GetConsoleBuffer's
+                                     own remarks) - so a VM's boot log is still here to read even if
+                                     nobody opened the console while it happened. Clicking opens the
+                                     real thing. -->
+                                <TextBlock Text="Console" FontSize="16" FontWeight="Bold" Margin="0,0,0,8"/>
+                                <Border Background="#0C0C0C" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" Padding="12" Cursor="Hand"
+                                        MouseLeftButtonUp="ConsolePreview_Click" ToolTip="Click to open the full console">
+                                    <TextBlock x:Name="ConsolePreviewText" FontFamily="Consolas" FontSize="11.5" Foreground="#D0D0D0"
+                                               TextWrapping="NoWrap" Text="(no output yet)"/>
                                 </Border>
                             </StackPanel>
                         </ScrollViewer>

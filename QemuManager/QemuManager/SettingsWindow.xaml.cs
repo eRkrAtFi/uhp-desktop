@@ -15,6 +15,7 @@ public partial class SettingsWindow : Window
         RiscvEmuDir = currentRiscvEmuDir;
         QemuDirBox.Text = currentQemuDir;
         RiscvEmuDirBox.Text = currentRiscvEmuDir;
+        VersionText.Text = AppVersion.DisplayString;
     }
 
     private void BrowseButton_Click(object sender, RoutedEventArgs e)

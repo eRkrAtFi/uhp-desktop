@@ -25,6 +25,16 @@
         <SolidColorBrush x:Key="StatusTransition" Color="#E0A530"/>
         <SolidColorBrush x:Key="StatusStopped" Color="#9A9A9A"/>
 
+        <!-- VM detail page (Phase 3): switches between the live stats
+             view and the stopped-VM config summary (BoolToVis/
+             InverseBoolToVis on IsRunning), and hides the Guest Detail
+             (QMP) tile for an engine that cannot report one
+             (BoolToVis on Hardware.SupportsGuestDetail) - see
+             VmHardwareDescription's own remarks on why that capability
+             lives in Core, not as a Kind check in this XAML. -->
+        <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+        <local:InverseBooleanToVisibilityConverter x:Key="InverseBoolToVis"/>
+
         <!-- WPF's default ComboBoxItem/Popup chrome, and several other
              built-in controls, pull some of their own brushes from these
              SystemColors keys instead of from an explicit style - overriding
@@ -276,6 +286,42 @@
                                 CornerRadius="4">
                             <ContentPresenter/>
                         </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Keyless/TargetType-matched (unlike VmListBoxItem just below,
+             a leftover from the pre-DataGrid card-style VM list, not
+             referenced anywhere any more) - applies to any plain ListBox
+             in the app that does not opt into its own ItemContainerStyle,
+             which today means RecentTasksList. Same IsSelected-only (not
+             IsSelectionActive) pattern as TreeViewItem/DataGridRow/
+             ComboBoxItem above, for the same reason: WPF's own default
+             ListBoxItem template falls back to
+             SystemColors.InactiveSelectionHighlightBrush once the window
+             loses focus, which at this app's own dark palette renders as
+             unreadable near-white-on-near-white. RecentTasksList's own
+             rows are not really meant to be a selectable list (it is a
+             passive log), but ListBox still lets a row be clicked into
+             a selected state by default, and this is what that then
+             looks like without an explicit style of its own. -->
+        <Style TargetType="ListBoxItem">
+            <Setter Property="Padding" Value="4,3"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="Bg" Background="Transparent" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="#1B2A3D"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="#1C1F27"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>

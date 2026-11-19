@@ -30,7 +30,11 @@ public static class CrashLogger
         {
             Directory.CreateDirectory(LogsDir);
             var path = Path.Combine(LogsDir, $"crash-{DateTime.Now:yyyyMMdd-HHmmss-fff}.log");
-            File.WriteAllText(path, $"{DateTime.Now:O}  {context}{Environment.NewLine}{ex}{Environment.NewLine}");
+            // Version first, before the exception itself - "which build
+            // crashed" is the first thing worth knowing reading a report,
+            // and previously was not recorded anywhere in the log file
+            // at all.
+            File.WriteAllText(path, $"{DateTime.Now:O}  {context}  (UHP Desktop {AppVersion.DisplayString}){Environment.NewLine}{ex}{Environment.NewLine}");
             return path;
         }
         catch

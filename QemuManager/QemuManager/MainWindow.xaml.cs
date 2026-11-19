@@ -5,9 +5,11 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
+using System.Windows.Media;
 using QemuManager.Models;
 using QemuManager.Services;
 using MessageBox = System.Windows.MessageBox;
+using Point = System.Windows.Point;
 
 namespace QemuManager;
 
@@ -133,12 +135,17 @@ public partial class MainWindow : Window
 
     private void VmList_SelectionChanged(object sender, SelectionChangedEventArgs e) => RefreshToolbarState();
 
+    /// <summary>Opens the VM's own detail page - previously opened Edit
+    /// (and only while stopped), which conflated "I want to look at this
+    /// VM" with "I want to change its configuration". Edit is still one
+    /// click away (its own button, in the grid toolbar and on the detail
+    /// page itself) for whoever actually wants that.</summary>
     private void VmList_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
         var item = SelectedItem;
         if (item == null) return;
-        if (_vmService.IsRunning(item.Config)) { SetStatus("Stop the VM before editing its configuration."); return; }
-        EditButton_Click(sender, e);
+        if (VirtualMachinesNode.ItemContainerGenerator.ContainerFromItem(item) is TreeViewItem container)
+            container.IsSelected = true;
     }
 
     // Set by VmList_PreviewMouseRightButtonDown (which runs first) and read
@@ -407,6 +414,73 @@ public partial class MainWindow : Window
         item.GuestDetail = stats.GuestDetail;
         item.Mips = stats.Mips;
         item.Instructions = stats.Instructions;
+
+        // Live updates for the detail page's own Performance graph/
+        // Console preview, but only while it is actually showing this
+        // specific VM - redrawing a graph nobody can see on every ~2s
+        // tick for every VM would just be wasted work.
+        if (vmId == _detailVmId)
+        {
+            RedrawCpuHistory(vmId);
+            RefreshConsolePreview(vmId);
+        }
+    }
+
+    // Which VM (if any) the detail page is currently showing - set by
+    // NavigatorTree_SelectedItemChanged, read by ApplyStats above to
+    // decide whether a live update needs the Performance graph/Console
+    // preview redrawn right now.
+    private string? _detailVmId;
+
+    private void RedrawCpuHistory(string vmId)
+    {
+        var history = _vmService.GetCpuHistory(vmId);
+        var width = CpuHistoryCanvas.ActualWidth;
+        var height = CpuHistoryCanvas.ActualHeight;
+        if (width <= 0 || height <= 0 || history.Count < 2)
+        {
+            CpuHistoryLine.Points = new PointCollection();
+            return;
+        }
+        var minTime = history[0].TimestampUtc;
+        var maxTime = history[^1].TimestampUtc;
+        var spanSeconds = (maxTime - minTime).TotalSeconds;
+        var points = new PointCollection(history.Count);
+        foreach (var sample in history)
+        {
+            var x = spanSeconds > 0 ? (sample.TimestampUtc - minTime).TotalSeconds / spanSeconds * width : width;
+            var clampedCpu = Math.Clamp(sample.CpuPercent, 0, 100);
+            var y = height - clampedCpu / 100.0 * height;
+            points.Add(new Point(x, y));
+        }
+        CpuHistoryLine.Points = points;
+    }
+
+    /// <summary>Covers the one gap RedrawCpuHistory's own call sites
+    /// cannot: the very first time CpuHistoryCanvas is laid out, its
+    /// ActualWidth/Height are still 0 at the moment the detail page's
+    /// own selection-changed handler calls RedrawCpuHistory, so that
+    /// call draws nothing. Once a real size arrives, redraw with
+    /// whatever VM is currently showing.</summary>
+    private void CpuHistoryCanvas_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (_detailVmId != null) RedrawCpuHistory(_detailVmId);
+    }
+
+    private void RefreshConsolePreview(string vmId)
+    {
+        var preview = _vmService.GetConsolePreview(vmId, 15);
+        ConsolePreviewText.Text = string.IsNullOrEmpty(preview) ? "(no output yet)" : preview;
+    }
+
+    /// <summary>Opens the full console for whichever VM the detail page
+    /// is currently showing - same idempotent path OpenConsoleWindow
+    /// already gives the Console button.</summary>
+    private void ConsolePreview_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        var item = SelectedItem;
+        if (item == null) return;
+        OpenConsoleWindow(item.Config);
     }
 
     // Phase 1 replaced the single-line status bar with a "Recent tasks"
@@ -462,10 +536,20 @@ public partial class MainWindow : Window
         // and RefreshToolbarState both act on the VM this page is
         // actually showing.
         VmDetailPage.Visibility = selectedVm != null ? Visibility.Visible : Visibility.Collapsed;
+        _detailVmId = selectedVm?.Config.Id;
         if (selectedVm != null)
         {
             VmDetailPage.DataContext = selectedVm;
             VmList.SelectedItem = selectedVm;
+            // An immediate draw, so switching to an already-running VM's
+            // detail page shows its graph/console preview right away
+            // rather than waiting for the next ~2s StatsReceived tick -
+            // best-effort only (CpuHistoryCanvas.ActualWidth can still be
+            // 0 here if this is the very first time VmDetailPage has ever
+            // been laid out; CpuHistoryCanvas_SizeChanged below covers
+            // that case, and the next stats tick covers everything else).
+            RedrawCpuHistory(selectedVm.Config.Id);
+            RefreshConsolePreview(selectedVm.Config.Id);
         }
         HostPage.Visibility = tag == "Host" ? Visibility.Visible : Visibility.Collapsed;
         EnginesPage.Visibility = tag == "Engines" ? Visibility.Visible : Visibility.Collapsed;

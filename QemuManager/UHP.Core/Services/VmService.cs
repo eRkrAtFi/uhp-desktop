@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using QemuManager.Models;
@@ -50,6 +51,32 @@ public class VmService : IVmService, IDisposable
     private readonly HashSet<string> _busyVmIds = new();
     private readonly object _busyLock = new();
 
+    // CPU history for the detail page's "last hour" graph (Phase 3) - kept
+    // here, fed from the same PollStatsAsync tick StatsReceived already
+    // uses, so it exists and keeps growing whether or not any window is
+    // currently showing it (open the detail page an hour into a VM's
+    // run and the graph is already full, not starting from empty).
+    // 1800 entries at the ~2s polling cadence below = about an hour;
+    // RingBuffer's own fixed capacity is what keeps a VM that runs for
+    // days from growing this without bound.
+    private const int CpuHistoryCapacity = 1800;
+    private readonly Dictionary<string, RingBuffer<CpuSample>> _cpuHistory = new();
+    private readonly object _cpuHistoryLock = new();
+
+    // Console output, captured continuously for every VM regardless of
+    // whether a ConsoleWindow is open - previously output only existed
+    // for as long as *something* was subscribed to OutputReceived, so a
+    // boot log that finished scrolling by before anyone thought to open
+    // the console was gone for good. Cleared at the start of each
+    // StartAsync, not kept across runs - "the boot log" means *this*
+    // run's, not some stale one from hours ago. Same retention cap
+    // ConsoleWindow's own local buffer already uses, applied here too
+    // now that this is the buffer ConsoleWindow actually seeds itself
+    // from (see GetConsoleBuffer).
+    private const int MaxConsoleBufferChars = 500_000;
+    private readonly Dictionary<string, StringBuilder> _consoleBuffers = new();
+    private readonly object _consoleBuffersLock = new();
+
     public VmService()
     {
         _riscv.StatsReceived += (vmId, s) => { lock (_latestRiscvStats) _latestRiscvStats[vmId] = (s.Instructions, s.Mips); };
@@ -60,8 +87,64 @@ public class VmService : IVmService, IDisposable
             // is still open, showing the guest's last output) is fine and
             // deliberate - see ConsoleWindow's own remarks - so this does
             // NOT end the console session, only cleans up the stats cache.
+            // The console *buffer* is left alone for the same reason -
+            // the last thing the guest said (e.g. "Power down") needs to
+            // stay readable after the process is already gone.
         };
+        _qemu.OutputReceived += AppendToConsoleBuffer;
+        _riscv.OutputReceived += AppendToConsoleBuffer;
         _statsTimer = new Timer(async _ => await PollStatsAsync(), null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+    }
+
+    private void AppendToConsoleBuffer(string vmId, byte[] data)
+    {
+        // Raw bytes decoded 1:1 (Latin1), not UTF-8 - same choice
+        // ConsoleWindow's own OnOutputReceived already makes, for the
+        // same reason: an arbitrary byte from the guest must never throw
+        // a decoding exception on this path.
+        var text = Encoding.Latin1.GetString(data);
+        lock (_consoleBuffersLock)
+        {
+            if (!_consoleBuffers.TryGetValue(vmId, out var sb))
+                _consoleBuffers[vmId] = sb = new StringBuilder();
+            sb.Append(text);
+            if (sb.Length > MaxConsoleBufferChars)
+                sb.Remove(0, sb.Length - MaxConsoleBufferChars);
+        }
+    }
+
+    /// <summary>Everything captured for this VM since its current run
+    /// started (or since the app started, if it was already running and
+    /// got reattached) - what a newly-opened ConsoleWindow seeds its own
+    /// view from, so a boot log that happened before the window existed
+    /// is still there to read.</summary>
+    public string GetConsoleBuffer(string vmId)
+    {
+        lock (_consoleBuffersLock)
+            return _consoleBuffers.TryGetValue(vmId, out var sb) ? sb.ToString() : "";
+    }
+
+    /// <summary>The last few lines of GetConsoleBuffer, for the detail
+    /// page's own console preview tile - trailing newline-split, empty
+    /// lines included (a blank line in the real console output is still
+    /// a real line), never more than <paramref name="lines"/> of them.</summary>
+    public string GetConsolePreview(string vmId, int lines = 15)
+    {
+        var full = GetConsoleBuffer(vmId);
+        if (full.Length == 0) return "";
+        var parts = full.Split('\n');
+        return string.Join('\n', parts.Skip(Math.Max(0, parts.Length - lines)));
+    }
+
+    /// <summary>Up to the last hour of host-CPU% samples for this VM,
+    /// oldest first - what the detail page's "Performance" graph plots.
+    /// Empty for a VM that has never been polled while running (never
+    /// started this session, or not running long enough to have been
+    /// polled even once).</summary>
+    public IReadOnlyList<CpuSample> GetCpuHistory(string vmId)
+    {
+        lock (_cpuHistoryLock)
+            return _cpuHistory.TryGetValue(vmId, out var buf) ? buf.ToList() : Array.Empty<CpuSample>();
     }
 
     /// <summary>Claims the one console session a VM may have open at a
@@ -207,7 +290,8 @@ public class VmService : IVmService, IDisposable
                 DiskDescription: disk == "None" ? disk : $"{disk} (virtio-blk)",
                 NetworkDescription: network,
                 ConsoleDescription: "Serial (UART)",
-                AcceleratorDescription: "Interpreter (this project's own CPU emulation)");
+                AcceleratorDescription: "Interpreter (this project's own CPU emulation)",
+                SupportsGuestDetail: false);
         }
 
         var console = vm.Display switch
@@ -224,7 +308,8 @@ public class VmService : IVmService, IDisposable
             DiskDescription: disk,
             NetworkDescription: network,
             ConsoleDescription: console,
-            AcceleratorDescription: vm.Accelerator);
+            AcceleratorDescription: vm.Accelerator,
+            SupportsGuestDetail: true);
     }
 
     public async Task<string> StartAsync(VmConfig vm, AppSettings settings)
@@ -240,6 +325,13 @@ public class VmService : IVmService, IDisposable
         if (!TryBeginAction(vm.Id)) return "Another action is already in progress for this VM.";
         try
         {
+            // A fresh run's own boot log, not whatever was left over from
+            // a previous one hours ago - see GetConsoleBuffer's own
+            // remarks on why this buffer is not cleared on exit (the
+            // guest's last words stay readable), only here, on the next
+            // actual start.
+            lock (_consoleBuffersLock) _consoleBuffers.Remove(vm.Id);
+
             // PollStatsAsync only iterates _configs, not "whatever is
             // running right now" - normally every VM reaches here via
             // LoadAll or Save first (that's how the real app's "New VM"/
@@ -308,6 +400,13 @@ public class VmService : IVmService, IDisposable
                 var detail = await GetGuestDetailAsync(vm);
                 (ulong, double)? riscv;
                 lock (_latestRiscvStats) riscv = _latestRiscvStats.TryGetValue(vm.Id, out var r) ? r : null;
+
+                lock (_cpuHistoryLock)
+                {
+                    if (!_cpuHistory.TryGetValue(vm.Id, out var buf))
+                        _cpuHistory[vm.Id] = buf = new RingBuffer<CpuSample>(CpuHistoryCapacity);
+                    buf.Add(new CpuSample(DateTime.UtcNow, snap.CpuPercent));
+                }
 
                 StatsReceived?.Invoke(vm.Id, new VmStats(
                     snap.State, snap.CpuPercent, snap.MemoryBytes, snap.Uptime, detail,

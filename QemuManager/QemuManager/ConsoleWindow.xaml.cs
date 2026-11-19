@@ -36,7 +36,15 @@ public partial class ConsoleWindow : Window
     private readonly IConsoleSource _source;
     private readonly StringBuilder _buffer = new();
 
-    public ConsoleWindow(VmConfig vm, IConsoleSource source)
+    // IVmService, not just IConsoleSource - the one extra thing this
+    // window needs beyond IConsoleSource's own narrow surface is
+    // GetConsoleBuffer, to seed its view with whatever Core already
+    // captured before this window existed (a boot log that finished
+    // scrolling by before anyone thought to open the console used to be
+    // gone for good - see VmService.GetConsoleBuffer's own remarks).
+    // Safe to require the wider interface: the only real caller
+    // (MainWindow.OpenConsoleWindow) already has one and passes it.
+    public ConsoleWindow(VmConfig vm, IVmService source)
     {
         InitializeComponent();
         _vm = vm;
@@ -47,6 +55,9 @@ public partial class ConsoleWindow : Window
         InputHintText.Text = vm.Kind == "RiscvEmu"
             ? "Input is sent to the guest's UART receive side - works once the guest has a getty or shell attached to it."
             : "Input is sent to the guest's serial port (COM1) - works once the guest has a getty or shell attached to it.";
+
+        var alreadyCaptured = source.GetConsoleBuffer(vm.Id);
+        if (alreadyCaptured.Length > 0) AppendOutput(alreadyCaptured);
 
         _source.OutputReceived += OnOutputReceived;
         _source.ProcessExited += OnProcessExited;

@@ -23,7 +23,26 @@ public class VmStore
             {
                 var json = File.ReadAllText(file);
                 var vm = JsonSerializer.Deserialize<VmConfig>(json);
-                if (vm != null) result.Add(vm);
+                if (vm != null)
+                {
+                    // VmConfig.MemoryMB's class default (2048) is sized for
+                    // QEMU - a riscv-emu VM saved before this field existed
+                    // deserializes with that QEMU default silently filled
+                    // in instead of riscv-emu's own 512 (CreateDraft's own
+                    // default for a brand-new VM, but that path is never
+                    // consulted again once a file already exists on disk).
+                    // Checked against the raw JSON, not "is MemoryMB still
+                    // 2048" - a real riscv-emu VM that was deliberately
+                    // saved with 2048 MB must not get silently downgraded
+                    // on every future load.
+                    if (vm.Kind == "RiscvEmu")
+                    {
+                        using var doc = JsonDocument.Parse(json);
+                        if (!doc.RootElement.TryGetProperty(nameof(VmConfig.MemoryMB), out _))
+                            vm.MemoryMB = 512;
+                    }
+                    result.Add(vm);
+                }
             }
             catch (Exception)
             {

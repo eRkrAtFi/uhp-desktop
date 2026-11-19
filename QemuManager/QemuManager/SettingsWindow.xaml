@@ -12,6 +12,7 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <TextBlock Grid.Row="0" Text="QEMU installation directory" Margin="0,0,0,6"
@@ -48,5 +49,13 @@
             <Button x:Name="OkButton" Content="OK" Click="OkButton_Click"/>
             <Button x:Name="CancelButton" Content="Cancel" Click="CancelButton_Click"/>
         </StackPanel>
+
+        <!-- AssemblyInformationalVersionAttribute, the same string a
+             published .exe's own "Product Version" file property shows
+             (see QemuManager.csproj's SetSourceRevisionId target) - so
+             "which build is this" stops depending on remembering a
+             publish timestamp. -->
+        <TextBlock x:Name="VersionText" Grid.Row="7" Margin="0,10,0,0" FontSize="11"
+                   Foreground="{StaticResource TextDim}" HorizontalAlignment="Right"/>
     </Grid>
 </Window>

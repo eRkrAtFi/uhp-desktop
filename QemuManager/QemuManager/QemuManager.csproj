@@ -17,6 +17,19 @@
     <Product>Universal Hypervisor Platform (UHP)</Product>
     <AssemblyTitle>UHP Desktop</AssemblyTitle>
     <ApplicationIcon>Assets\uhp.ico</ApplicationIcon>
+    <!-- Bumped by hand at an actual tagged release (currently v0.1.0),
+         not automatically - SourceRevisionId below (short commit hash,
+         -dirty if the working tree has uncommitted changes, build
+         timestamp) is what actually makes two builds between releases
+         distinguishable, which is the part that needed to stop being
+         guessable from a build/publish timestamp someone could forget to
+         check. Read at runtime as
+         Assembly.GetEntryAssembly().GetCustomAttribute&lt;AssemblyInformationalVersionAttribute&gt;()
+         (SettingsWindow, CrashLogger) and externally, with no need to
+         run the app at all, via (Get-Item QemuManager.exe).VersionInfo.ProductVersion
+         (finish.ps1's own last line) - both read the exact same string,
+         the SDK's own standard mechanism for this, not a custom one. -->
+    <Version>0.1.0</Version>
     <!-- Self-contained single-file publish: the point is a standalone .exe
          that needs no separately-installed .NET runtime on the target
          machine. QEMU itself remains an external dependency, located at
@@ -33,6 +46,42 @@
   <ItemGroup>
     <ProjectReference Include="..\UHP.Core\UHP.Core.csproj" />
   </ItemGroup>
+
+  <!-- Computes SourceRevisionId (short commit hash, -dirty if the
+       working tree has uncommitted changes, UTC build timestamp) before
+       the SDK's own GenerateAssemblyInfo step consumes it - the SDK
+       appends "+$(SourceRevisionId)" to AssemblyInformationalVersion
+       automatically once this is set, which is also what ends up in the
+       built .exe's own "Product Version" PE resource field, so no
+       separate generated-source-file plumbing is needed for either the
+       in-app (SettingsWindow/CrashLogger) or external (finish.ps1) read
+       of it. git must be on PATH; if it is not (or this somehow is not
+       a git checkout), GitHash falls back to "unknown" rather than
+       failing the build over a version string. -->
+  <!-- AfterTargets="InitializeSourceControlInformation": the SDK's own
+       git integration (active automatically once it detects this is a
+       git checkout) sets SourceRevisionId itself, to the *full* 40-char
+       commit hash with no dirty/timestamp info - confirmed directly
+       (ProductVersion came out as "0.1.0+b99ac1d27dcbe9d..." before this
+       was added). Running after that target, not merely before
+       CoreCompile, is what actually lets this override it rather than
+       silently losing to it. -->
+  <Target Name="SetSourceRevisionId" AfterTargets="InitializeSourceControlInformation" BeforeTargets="CoreCompile">
+    <Exec Command="git rev-parse --short HEAD" ConsoleToMSBuild="true" StandardOutputImportance="low" ContinueOnError="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="GitHashOutput" />
+      <Output TaskParameter="ExitCode" PropertyName="GitHashExitCode" />
+    </Exec>
+    <Exec Command="git status --porcelain" ConsoleToMSBuild="true" StandardOutputImportance="low" ContinueOnError="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="GitStatusOutput" />
+    </Exec>
+    <PropertyGroup>
+      <GitHash Condition="'$(GitHashExitCode)' == '0' AND '$(GitHashOutput)' != ''">$(GitHashOutput)</GitHash>
+      <GitHash Condition="'$(GitHash)' == ''">unknown</GitHash>
+      <DirtySuffix Condition="'$(GitStatusOutput)' != ''">-dirty</DirtySuffix>
+      <BuildTimeStamp>$([System.DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss'))Z</BuildTimeStamp>
+      <SourceRevisionId>$(GitHash)$(DirtySuffix).built-$(BuildTimeStamp)</SourceRevisionId>
+    </PropertyGroup>
+  </Target>
 
   <ItemGroup>
     <!-- ApplicationIcon above only embeds this into the .exe's own Win32

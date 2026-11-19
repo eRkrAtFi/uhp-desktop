@@ -518,8 +518,8 @@ Console.WriteLine("\n--- VmService facade (Core architecture refactor) ---");
         var facadeVmRiscv = new VmConfig { Kind = "RiscvEmu", Name = "selftest-engine-facade", KernelPath = facadeKernelPath };
 
         var hw = service.GetHardwareDescription(facadeVmRiscv);
-        Console.WriteLine($"GetHardwareDescription (riscv-emu): Engine={hw.EngineDisplayName}, Architecture={hw.Architecture}, CPU={hw.CpuDescription}, Accelerator={hw.AcceleratorDescription}");
-        Console.WriteLine($"  EngineDisplayName == riscv-emu: {hw.EngineDisplayName == "riscv-emu"}, Architecture == riscv64: {hw.Architecture == "riscv64"}, CPU mentions 1 hart: {hw.CpuDescription.Contains("1 hart")}, Accelerator mentions Interpreter: {hw.AcceleratorDescription.Contains("Interpreter")}");
+        Console.WriteLine($"GetHardwareDescription (riscv-emu): Engine={hw.EngineDisplayName}, Architecture={hw.Architecture}, CPU={hw.CpuDescription}, Accelerator={hw.AcceleratorDescription}, SupportsGuestDetail={hw.SupportsGuestDetail}");
+        Console.WriteLine($"  EngineDisplayName == riscv-emu: {hw.EngineDisplayName == "riscv-emu"}, Architecture == riscv64: {hw.Architecture == "riscv64"}, CPU mentions 1 hart: {hw.CpuDescription.Contains("1 hart")}, Accelerator mentions Interpreter: {hw.AcceleratorDescription.Contains("Interpreter")}, SupportsGuestDetail == False (no QMP-equivalent channel): {hw.SupportsGuestDetail == false}");
 
         Console.WriteLine($"GetConsoleAvailability before start: {service.GetConsoleAvailability(facadeVmRiscv).kind} (expected: NotRunning)");
 
@@ -541,6 +541,20 @@ Console.WriteLine("\n--- VmService facade (Core architecture refactor) ---");
             ? $"StatsReceived for riscv-emu: state={s1.State}, cpu={s1.CpuPercent:0.#}%, mem={s1.MemoryBytes / 1024.0 / 1024.0:0.#} MB, uptime={s1.Uptime}, mips={s1.Mips:0.#}, instructions={s1.Instructions} (expect Mips/Instructions non-null)"
             : "StatsReceived never fired for riscv-emu (unexpected)");
 
+        // GetCpuHistory/GetConsoleBuffer/GetConsolePreview (Phase 3's
+        // Performance graph and Console preview) - fed continuously by
+        // VmService itself (PollStatsAsync, and _riscv.OutputReceived
+        // subscribed in VmService's own constructor), not recomputed only
+        // once a window asks, so both already have data here with no
+        // ConsoleWindow/detail page ever having been opened.
+        var riscvHistory = service.GetCpuHistory(facadeVmRiscv.Id);
+        Console.WriteLine($"GetCpuHistory for riscv-emu: {riscvHistory.Count} sample(s) (expected: at least 1, since StatsReceived already fired above)");
+        var riscvConsole = service.GetConsoleBuffer(facadeVmRiscv.Id);
+        Console.WriteLine($"GetConsoleBuffer for riscv-emu: {riscvConsole.Length} char(s) captured (expected: > 0 - riscv-emu's own boot/SBI output)");
+        var riscvPreview = service.GetConsolePreview(facadeVmRiscv.Id, 15);
+        var riscvPreviewLines = riscvPreview.Length == 0 ? 0 : riscvPreview.Split('\n').Length;
+        Console.WriteLine($"GetConsolePreview(15) line count: {riscvPreviewLines} (expected: <= 15), is a suffix of the full buffer: {riscvConsole.EndsWith(riscvPreview)}");
+
         // ShutdownAsync for riscv-emu is still ForceStop under the hood
         // (see VmService's own remarks) - same real-process-exits proof the
         // dedicated RiscvEmu engine test earlier already gives ForceStop
@@ -561,8 +575,8 @@ Console.WriteLine("\n--- VmService facade (Core architecture refactor) ---");
         var facadeVmQemu = new VmConfig { Kind = "Qemu", Name = "selftest-engine-facade-qemu", Architecture = "x86_64", MemoryMB = 128, CpuCores = 1, Display = "none" };
 
         var hw = service.GetHardwareDescription(facadeVmQemu);
-        Console.WriteLine($"GetHardwareDescription (QEMU): Engine={hw.EngineDisplayName}, Architecture={hw.Architecture}, CPU={hw.CpuDescription}, Accelerator={hw.AcceleratorDescription}");
-        Console.WriteLine($"  EngineDisplayName == QEMU: {hw.EngineDisplayName == "QEMU"}, Architecture == x86_64: {hw.Architecture == "x86_64"}, CPU mentions core count: {hw.CpuDescription.Contains("1 core")}, Accelerator == tcg: {hw.AcceleratorDescription == "tcg"}");
+        Console.WriteLine($"GetHardwareDescription (QEMU): Engine={hw.EngineDisplayName}, Architecture={hw.Architecture}, CPU={hw.CpuDescription}, Accelerator={hw.AcceleratorDescription}, SupportsGuestDetail={hw.SupportsGuestDetail}");
+        Console.WriteLine($"  EngineDisplayName == QEMU: {hw.EngineDisplayName == "QEMU"}, Architecture == x86_64: {hw.Architecture == "x86_64"}, CPU mentions core count: {hw.CpuDescription.Contains("1 core")}, Accelerator == tcg: {hw.AcceleratorDescription == "tcg"}, SupportsGuestDetail == True (QMP): {hw.SupportsGuestDetail == true}");
 
         VmStats? lastStats = null;
         service.StatsReceived += (vmId, s) => { if (vmId == facadeVmQemu.Id) lastStats = s; };
@@ -578,6 +592,18 @@ Console.WriteLine("\n--- VmService facade (Core architecture refactor) ---");
         Console.WriteLine(lastStats is { } s2
             ? $"StatsReceived for QEMU: state={s2.State}, cpu={s2.CpuPercent:0.#}%, mem={s2.MemoryBytes / 1024.0 / 1024.0:0.#} MB, uptime={s2.Uptime}, guestDetail={s2.GuestDetail}, mips={s2.Mips} (expect Mips null - QEMU has no such channel)"
             : "StatsReceived never fired for QEMU (unexpected)");
+
+        // GetCpuHistory is fed from the same StatsReceived tick regardless
+        // of engine, so it should already have data here just like the
+        // riscv-emu branch above. GetConsoleBuffer is NOT asserted either
+        // way for this VM: VmProcessManager only routes QEMU's own output
+        // through OutputReceived when Display=="console" (see
+        // IConsoleSource's own remarks) - this VM uses Display="none" (the
+        // same headless smoke-test setting the rest of this file's QEMU
+        // VMs use), so an empty buffer here is expected, not a bug.
+        var qemuHistory = service.GetCpuHistory(facadeVmQemu.Id);
+        Console.WriteLine($"GetCpuHistory for QEMU: {qemuHistory.Count} sample(s) (expected: at least 1)");
+        Console.WriteLine($"GetConsoleBuffer for QEMU (Display=none, no output expected): {service.GetConsoleBuffer(facadeVmQemu.Id).Length} char(s)");
 
         Console.WriteLine(service.ForceStop(facadeVmQemu));
         await Task.Delay(300);
@@ -789,6 +815,57 @@ Console.WriteLine("\n--- AppPaths legacy-data import (Import/Start empty, not a 
     }
 }
 
+Console.WriteLine("\n--- VmStore: a riscv-emu VM saved before MemoryMB existed loads as 512 MB, not QEMU's 2048 MB default (item 2 of the Phase 3 detail-page work) ---");
+// VmConfig.MemoryMB's class default (2048) is sized for QEMU - loading an
+// old-format riscv-emu VM whose saved JSON has no MemoryMB field at all
+// used to silently fill in that QEMU-sized default instead of riscv-emu's
+// own 512, and did so on every LOAD, not just when a VM was first
+// created - see VmStore.LoadAll's own remarks. Writes straight into
+// AppPaths.VmsDir, the one directory this whole SelfTest process already
+// uses (QEMUMANAGER_DATA_DIR is fixed at the top of this file), the same
+// shared scratch folder the facade CRUD test above already writes into.
+{
+    var store = new VmStore();
+    var oldFormatId = $"selftest-riscv-old-format-{Guid.NewGuid():N}";
+    var oldFormatPath = Path.Combine(AppPaths.VmsDir, oldFormatId + ".json");
+    var explicit2048Id = $"selftest-riscv-explicit-2048-{Guid.NewGuid():N}";
+    var explicit2048Path = Path.Combine(AppPaths.VmsDir, explicit2048Id + ".json");
+    try
+    {
+        Directory.CreateDirectory(AppPaths.VmsDir);
+        // No "MemoryMB" property at all - the exact shape a VM saved before
+        // that field existed would have.
+        File.WriteAllText(oldFormatPath, $$"""
+        {
+          "Id": "{{oldFormatId}}",
+          "Name": "selftest-riscv-old-format",
+          "Kind": "RiscvEmu"
+        }
+        """);
+        // Same Kind, but MemoryMB IS present and deliberately not 512 - must
+        // be respected exactly as saved, never silently downgraded.
+        File.WriteAllText(explicit2048Path, $$"""
+        {
+          "Id": "{{explicit2048Id}}",
+          "Name": "selftest-riscv-explicit-2048",
+          "Kind": "RiscvEmu",
+          "MemoryMB": 2048
+        }
+        """);
+
+        var loaded = store.LoadAll();
+        var oldFormatVm = loaded.FirstOrDefault(v => v.Id == oldFormatId);
+        var explicit2048Vm = loaded.FirstOrDefault(v => v.Id == explicit2048Id);
+        Console.WriteLine($"Old-format riscv-emu VM (no MemoryMB in its JSON) loads with MemoryMB == 512: {oldFormatVm?.MemoryMB == 512} (actual: {(oldFormatVm != null ? oldFormatVm.MemoryMB.ToString() : "<not found>")})");
+        Console.WriteLine($"riscv-emu VM explicitly saved with MemoryMB=2048 still loads as 2048 (not downgraded): {explicit2048Vm?.MemoryMB == 2048} (actual: {(explicit2048Vm != null ? explicit2048Vm.MemoryMB.ToString() : "<not found>")})");
+    }
+    finally
+    {
+        try { File.Delete(oldFormatPath); } catch { }
+        try { File.Delete(explicit2048Path); } catch { }
+    }
+}
+
 Console.WriteLine("\n--- No DataGrid in the app is editable unless explicitly intended (bug: double-click on a cell crashed the app) ---");
 // A static check of the actual .xaml source, not a runtime/window check -
 // in keeping with "logic belongs in Core, tested without a window" even
@@ -918,6 +995,35 @@ Console.WriteLine("\n--- NoResize dialogs must not have a fixed Height (content 
             var ok = !isNoResize || (!hasFixedHeight && hasSizeToContent);
             Console.WriteLine($"{name}: NoResize={isNoResize}, fixed Height={hasFixedHeight}, SizeToContent includes Height={hasSizeToContent} -> {(ok ? "OK" : "FAIL - NoResize with a fixed Height can clip content with no way to see the rest")}");
         }
+    }
+}
+
+Console.WriteLine("\n--- Version embedded in the built QemuManager.exe (SetSourceRevisionId target) ---");
+// Reads the .exe's own PE "Product Version" field directly
+// (System.Diagnostics.FileVersionInfo), the same field
+// (Get-Item QemuManager.exe).VersionInfo.ProductVersion and finish.ps1's
+// own last line read - not AppVersion.DisplayString, which would read
+// *this* process's (QemuManager.SelfTest's) own version, not
+// QemuManager.exe's, since SelfTest has no SetSourceRevisionId target of
+// its own. Catches the exact regression already hit once while building
+// this: the .NET SDK's own git integration sets SourceRevisionId to the
+// full 40-char commit hash before QemuManager.csproj's own target runs,
+// silently overwriting a -dirty/build-timestamp result to look like a
+// working-but-wrong plain commit hash unless this target explicitly
+// runs after the SDK's own (AfterTargets="InitializeSourceControlInformation").
+{
+    var wpfProjectDir = args.Length > 2 ? args[2] : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "QemuManager"));
+    var exePath = Path.Combine(wpfProjectDir, "bin", "Release", "net8.0-windows", "win-x64", "QemuManager.exe");
+    if (!File.Exists(exePath))
+    {
+        Console.WriteLine($"QemuManager.exe not found at '{exePath}' (build it first with `dotnet build QemuManager/QemuManager.csproj -c Release`) - skipping.");
+    }
+    else
+    {
+        var productVersion = System.Diagnostics.FileVersionInfo.GetVersionInfo(exePath).ProductVersion ?? "";
+        Console.WriteLine($"ProductVersion: {productVersion}");
+        var looksRight = System.Text.RegularExpressions.Regex.IsMatch(productVersion, @"^\d+\.\d+\.\d+\+[0-9a-f]{7,8}(-dirty)?\.built-\d{8}-\d{6}Z$");
+        Console.WriteLine($"Matches <version>+<7-8 hex commit hash>[-dirty].built-<UTC timestamp>: {looksRight}");
     }
 }
 
