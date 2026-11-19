@@ -314,12 +314,12 @@
                         <ScrollViewer VerticalScrollBarVisibility="Auto">
                             <StackPanel Margin="32">
                                 <!-- Running: the same live numbers the grid's own columns show, just
-                                     larger - plus Speed (MIPS, riscv-emu only - MipsText is "-" for a
-                                     QEMU VM, the same "not applicable" convention every tile already
-                                     uses) and Guest Detail (QMP-only - Visibility bound to
-                                     Hardware.SupportsGuestDetail, not Kind, so a future third engine
-                                     only has to set that one flag correctly, not get found and fixed
-                                     here too). -->
+                                     larger - plus Speed (MIPS, riscv-emu only) and Guest Detail
+                                     (QMP, QEMU only), both gated on their own capability flag
+                                     (Hardware.SupportsSpeedMetric/SupportsGuestDetail) rather than
+                                     Kind, so a future third engine only has to set those flags
+                                     correctly, not get found and fixed here too. Previously Speed
+                                     just showed a bare "-" for every QEMU VM instead of being hidden. -->
                                 <StackPanel Visibility="{Binding IsRunning, Converter={StaticResource BoolToVis}}">
                                     <StackPanel Orientation="Horizontal" Margin="0,0,0,20">
                                         <Border Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" Padding="14,10" Margin="0,0,10,0" MinWidth="110">
@@ -340,7 +340,8 @@
                                                 <TextBlock Text="{Binding UptimeText}" FontSize="18" FontWeight="Bold"/>
                                             </StackPanel>
                                         </Border>
-                                        <Border Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" Padding="14,10" Margin="0,0,10,0" MinWidth="110">
+                                        <Border Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" Padding="14,10" Margin="0,0,10,0" MinWidth="110"
+                                                Visibility="{Binding Hardware.SupportsSpeedMetric, Converter={StaticResource BoolToVis}}">
                                             <StackPanel>
                                                 <TextBlock Text="Speed" FontSize="11" Foreground="{StaticResource TextDim}"/>
                                                 <TextBlock Text="{Binding MipsText}" FontSize="18" FontWeight="Bold"/>
@@ -364,10 +365,28 @@
                                                  charting control built in, and this is one line, not
                                                  worth a library dependency for. Fixed height; width
                                                  follows the card via Stretch, scaled to
-                                                 CpuHistoryCanvas.ActualWidth at draw time. -->
-                                            <Canvas x:Name="CpuHistoryCanvas" Height="100" ClipToBounds="True" SizeChanged="CpuHistoryCanvas_SizeChanged">
-                                                <Polyline x:Name="CpuHistoryLine" Stroke="{StaticResource Accent}" StrokeThickness="2"/>
-                                            </Canvas>
+                                                 CpuHistoryCanvas.ActualWidth at draw time.
+                                                 Y-axis top is the actual max of the current sample
+                                                 set, not a fixed 100% ceiling - a VM idling at 1-2%
+                                                 CPU used to draw as a flat line hugging the bottom
+                                                 with no visible scale at all. -->
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="40"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
+                                                <Grid Grid.Column="0" Margin="0,0,6,0">
+                                                    <TextBlock x:Name="CpuHistoryMaxLabel" Text="-" FontSize="10" Foreground="{StaticResource TextDim}" VerticalAlignment="Top" HorizontalAlignment="Right"/>
+                                                    <TextBlock Text="0%" FontSize="10" Foreground="{StaticResource TextDim}" VerticalAlignment="Bottom" HorizontalAlignment="Right"/>
+                                                </Grid>
+                                                <Canvas Grid.Column="1" x:Name="CpuHistoryCanvas" Height="100" ClipToBounds="True" SizeChanged="CpuHistoryCanvas_SizeChanged">
+                                                    <Polyline x:Name="CpuHistoryLine" Stroke="{StaticResource Accent}" StrokeThickness="2"/>
+                                                </Canvas>
+                                            </Grid>
+                                            <Grid Margin="46,4,0,0">
+                                                <TextBlock x:Name="CpuHistoryStartLabel" Text="" FontSize="10" Foreground="{StaticResource TextDim}" HorizontalAlignment="Left"/>
+                                                <TextBlock x:Name="CpuHistoryEndLabel" Text="" FontSize="10" Foreground="{StaticResource TextDim}" HorizontalAlignment="Right"/>
+                                            </Grid>
                                         </StackPanel>
                                     </Border>
                                 </StackPanel>

@@ -72,7 +72,16 @@ public partial class MainWindow : Window
         }
 
         _settings = AppSettings.Load();
-        _vmService.StateChanged += () => Dispatcher.Invoke(RefreshRunStates);
+        // Not the plain RefreshRunStates() the explicit Power On/Shut
+        // Down/Force Stop handlers call after they log their own result -
+        // this variant additionally logs an unprompted stop (closing a
+        // QEMU gtk/sdl window, a crash, or a graceful ACPI shutdown
+        // finally completing well after "Shut Down" already logged its
+        // own "request sent" message) to Recent Tasks, which otherwise
+        // went completely unreported. See its own remarks for why
+        // IsActionInProgress is what keeps an explicit stop from being
+        // logged twice.
+        _vmService.StateChanged += () => Dispatcher.Invoke(RefreshRunStatesFromExternalEvent);
         // Replaces the DispatcherTimer this window used to own and poll
         // GetSnapshot/QueryGuestStatusAsync from every 2 seconds - that
         // loop now lives in VmService itself (a plain, non-WPF Timer), and
@@ -364,6 +373,30 @@ public partial class MainWindow : Window
         RefreshToolbarState();
     }
 
+    /// <summary>The StateChanged event's own subscriber - fires for every
+    /// state transition, for either engine, regardless of cause. A
+    /// transition into Stopped while VmService.IsActionInProgress is
+    /// False for that VM did not come from this window's own Power On/
+    /// Shut Down/Force Stop handlers (every one of them holds that guard
+    /// for the duration of its own call and logs its own result before
+    /// calling the plain RefreshRunStates() above, not this method) - it
+    /// is the OS process actually exiting on its own: a QEMU gtk/sdl
+    /// window the user closed directly, a crash, or a graceful ACPI
+    /// shutdown (StopButton's own guard ends right after the request is
+    /// sent, long before the guest actually powers off) finally
+    /// completing. Previously none of that was ever reported anywhere.</summary>
+    private void RefreshRunStatesFromExternalEvent()
+    {
+        foreach (var item in _items)
+        {
+            var oldState = item.State;
+            var newState = _vmService.GetState(item.Config);
+            if (oldState != VmState.Stopped && newState == VmState.Stopped && !_vmService.IsActionInProgress(item.Config.Id))
+                SetStatus($"{item.Config.Name}: VM stopped (process exited).");
+        }
+        RefreshRunStates();
+    }
+
     private void RefreshSummary()
     {
         var running = _items.Count(i => i.IsRunning);
@@ -440,20 +473,35 @@ public partial class MainWindow : Window
         if (width <= 0 || height <= 0 || history.Count < 2)
         {
             CpuHistoryLine.Points = new PointCollection();
+            CpuHistoryMaxLabel.Text = "-";
+            CpuHistoryStartLabel.Text = "";
+            CpuHistoryEndLabel.Text = "";
             return;
         }
         var minTime = history[0].TimestampUtc;
         var maxTime = history[^1].TimestampUtc;
         var spanSeconds = (maxTime - minTime).TotalSeconds;
+        // The Y-axis top is the actual peak of this sample set, not a
+        // fixed 100% - floored at 1% so a VM sitting at ~0% the whole
+        // time still gets a sane, non-zero scale instead of a
+        // divide-by-zero flat line. Clamped to 100 at the high end:
+        // CpuPercent is already per-core-normalized (see VmListItem's
+        // own remarks), so a genuine excursion above 100% is not
+        // expected, and a transient spike should not alone decide the
+        // whole axis if it ever does happen.
+        var maxCpu = Math.Clamp(history.Max(s => s.CpuPercent), 1.0, 100.0);
         var points = new PointCollection(history.Count);
         foreach (var sample in history)
         {
             var x = spanSeconds > 0 ? (sample.TimestampUtc - minTime).TotalSeconds / spanSeconds * width : width;
-            var clampedCpu = Math.Clamp(sample.CpuPercent, 0, 100);
-            var y = height - clampedCpu / 100.0 * height;
+            var clampedCpu = Math.Clamp(sample.CpuPercent, 0, maxCpu);
+            var y = height - clampedCpu / maxCpu * height;
             points.Add(new Point(x, y));
         }
         CpuHistoryLine.Points = points;
+        CpuHistoryMaxLabel.Text = $"{maxCpu:0.#}%";
+        CpuHistoryStartLabel.Text = minTime.ToLocalTime().ToString("HH:mm:ss");
+        CpuHistoryEndLabel.Text = maxTime.ToLocalTime().ToString("HH:mm:ss");
     }
 
     /// <summary>Covers the one gap RedrawCpuHistory's own call sites

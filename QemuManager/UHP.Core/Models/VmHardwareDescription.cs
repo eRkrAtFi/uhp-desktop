@@ -23,4 +23,10 @@ public record VmHardwareDescription(
     /// (QMP)" tile binds its Visibility to this, not to Kind directly -
     /// an engine's own capabilities belong here, in one place, not
     /// re-decided in XAML on a per-engine basis.</summary>
-    bool SupportsGuestDetail);
+    bool SupportsGuestDetail,
+    /// <summary>Whether this engine reports its own emulated-instruction
+    /// speed (riscv-emu: MIPS, straight from its own stderr stats line -
+    /// QEMU has no equivalent self-reported figure, so this is false
+    /// there and the detail page's "Speed" tile - which used to show a
+    /// bare "-" for every QEMU VM - binds its Visibility to this instead).</summary>
+    bool SupportsSpeedMetric);

@@ -518,8 +518,8 @@ Console.WriteLine("\n--- VmService facade (Core architecture refactor) ---");
         var facadeVmRiscv = new VmConfig { Kind = "RiscvEmu", Name = "selftest-engine-facade", KernelPath = facadeKernelPath };
 
         var hw = service.GetHardwareDescription(facadeVmRiscv);
-        Console.WriteLine($"GetHardwareDescription (riscv-emu): Engine={hw.EngineDisplayName}, Architecture={hw.Architecture}, CPU={hw.CpuDescription}, Accelerator={hw.AcceleratorDescription}, SupportsGuestDetail={hw.SupportsGuestDetail}");
-        Console.WriteLine($"  EngineDisplayName == riscv-emu: {hw.EngineDisplayName == "riscv-emu"}, Architecture == riscv64: {hw.Architecture == "riscv64"}, CPU mentions 1 hart: {hw.CpuDescription.Contains("1 hart")}, Accelerator mentions Interpreter: {hw.AcceleratorDescription.Contains("Interpreter")}, SupportsGuestDetail == False (no QMP-equivalent channel): {hw.SupportsGuestDetail == false}");
+        Console.WriteLine($"GetHardwareDescription (riscv-emu): Engine={hw.EngineDisplayName}, Architecture={hw.Architecture}, CPU={hw.CpuDescription}, Accelerator={hw.AcceleratorDescription}, SupportsGuestDetail={hw.SupportsGuestDetail}, SupportsSpeedMetric={hw.SupportsSpeedMetric}");
+        Console.WriteLine($"  EngineDisplayName == riscv-emu: {hw.EngineDisplayName == "riscv-emu"}, Architecture == riscv64: {hw.Architecture == "riscv64"}, CPU mentions 1 hart: {hw.CpuDescription.Contains("1 hart")}, Accelerator mentions Interpreter: {hw.AcceleratorDescription.Contains("Interpreter")}, SupportsGuestDetail == False (no QMP-equivalent channel): {hw.SupportsGuestDetail == false}, SupportsSpeedMetric == True (own MIPS stats line): {hw.SupportsSpeedMetric == true}");
 
         Console.WriteLine($"GetConsoleAvailability before start: {service.GetConsoleAvailability(facadeVmRiscv).kind} (expected: NotRunning)");
 
@@ -575,8 +575,8 @@ Console.WriteLine("\n--- VmService facade (Core architecture refactor) ---");
         var facadeVmQemu = new VmConfig { Kind = "Qemu", Name = "selftest-engine-facade-qemu", Architecture = "x86_64", MemoryMB = 128, CpuCores = 1, Display = "none" };
 
         var hw = service.GetHardwareDescription(facadeVmQemu);
-        Console.WriteLine($"GetHardwareDescription (QEMU): Engine={hw.EngineDisplayName}, Architecture={hw.Architecture}, CPU={hw.CpuDescription}, Accelerator={hw.AcceleratorDescription}, SupportsGuestDetail={hw.SupportsGuestDetail}");
-        Console.WriteLine($"  EngineDisplayName == QEMU: {hw.EngineDisplayName == "QEMU"}, Architecture == x86_64: {hw.Architecture == "x86_64"}, CPU mentions core count: {hw.CpuDescription.Contains("1 core")}, Accelerator == tcg: {hw.AcceleratorDescription == "tcg"}, SupportsGuestDetail == True (QMP): {hw.SupportsGuestDetail == true}");
+        Console.WriteLine($"GetHardwareDescription (QEMU): Engine={hw.EngineDisplayName}, Architecture={hw.Architecture}, CPU={hw.CpuDescription}, Accelerator={hw.AcceleratorDescription}, SupportsGuestDetail={hw.SupportsGuestDetail}, SupportsSpeedMetric={hw.SupportsSpeedMetric}");
+        Console.WriteLine($"  EngineDisplayName == QEMU: {hw.EngineDisplayName == "QEMU"}, Architecture == x86_64: {hw.Architecture == "x86_64"}, CPU mentions core count: {hw.CpuDescription.Contains("1 core")}, Accelerator == tcg: {hw.AcceleratorDescription == "tcg"}, SupportsGuestDetail == True (QMP): {hw.SupportsGuestDetail == true}, SupportsSpeedMetric == False (no self-reported speed): {hw.SupportsSpeedMetric == false}");
 
         VmStats? lastStats = null;
         service.StatsReceived += (vmId, s) => { if (vmId == facadeVmQemu.Id) lastStats = s; };

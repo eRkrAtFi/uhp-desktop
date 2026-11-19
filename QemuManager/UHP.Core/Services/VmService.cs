@@ -291,7 +291,8 @@ public class VmService : IVmService, IDisposable
                 NetworkDescription: network,
                 ConsoleDescription: "Serial (UART)",
                 AcceleratorDescription: "Interpreter (this project's own CPU emulation)",
-                SupportsGuestDetail: false);
+                SupportsGuestDetail: false,
+                SupportsSpeedMetric: true);
         }
 
         var console = vm.Display switch
@@ -309,7 +310,8 @@ public class VmService : IVmService, IDisposable
             NetworkDescription: network,
             ConsoleDescription: console,
             AcceleratorDescription: vm.Accelerator,
-            SupportsGuestDetail: true);
+            SupportsGuestDetail: true,
+            SupportsSpeedMetric: false);
     }
 
     public async Task<string> StartAsync(VmConfig vm, AppSettings settings)
