@@ -104,7 +104,19 @@ public class VmConfig
     /// would otherwise skip. A guest with a real init system (e.g. Alpine
     /// installed on a disk image) should have this changed to a plain
     /// "poweroff" instead, so services actually stop and filesystems
-    /// unmount before power-off.</summary>
+    /// unmount before power-off.
+    ///
+    /// PENDING (not yet done - do this once the Buildroot-built image
+    /// replaces the current undocumented-provenance one, after boot/
+    /// shutdown are verified against the real image, not before): the
+    /// new image's busybox init (board/riscv-emu/rootfs-overlay/etc/
+    /// inittab) does act on a plain SIGUSR2/poweroff signal, and its
+    /// kernel fragment enables CONFIG_POWER_RESET_SYSCON_POWEROFF - the
+    /// "-f" workaround this default exists for is specific to the OLD
+    /// image's own init and should not carry over. Change this default
+    /// to plain "poweroff" at that point, together with the
+    /// GUEST_PROMPT/GUEST_BANNER updates in riscv-emu/boot/
+    /// guest-markers.sh and QemuManager.SelfTest/Program.cs.</summary>
     public string ShutdownCommand { get; set; } = "sync; poweroff -f";
 
     public DateTime CreatedUtc { get; set; } = DateTime.UtcNow;

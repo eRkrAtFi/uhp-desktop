@@ -16,6 +16,8 @@
 # shell `|`, which is the delivery method actually proven reliable here.
 set -e
 cd "$(dirname "$0")/.."
+# shellcheck source=guest-markers.sh
+. "$(dirname "$0")/guest-markers.sh"
 
 # See boot_test.sh's own comment: a fixed RTC reading by default, so a
 # byte-exact comparison stays available without having to remember this
@@ -43,7 +45,7 @@ PID=$!
 echo "interactive_test: waiting for the shell prompt (log: $LOG)"
 i=0
 while [ $i -lt 60 ]; do
-    if grep -q '~ #' "$LOG" 2>/dev/null; then
+    if grep -qF "$GUEST_PROMPT" "$LOG" 2>/dev/null; then
         break
     fi
     if ! kill -0 "$PID" 2>/dev/null; then

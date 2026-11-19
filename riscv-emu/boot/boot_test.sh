@@ -9,6 +9,8 @@
 # failure too.
 set -e
 cd "$(dirname "$0")/.."
+# shellcheck source=guest-markers.sh
+. "$(dirname "$0")/guest-markers.sh"
 
 # A fixed RTC reading, not real wall-clock time, by default for every
 # comparison/regression script - not just this one - so byte-exact
@@ -55,7 +57,7 @@ PID=$!
 # entirely, rather than trusting any process-exit signal's timing.
 i=0
 while [ $i -lt 120 ]; do
-    if grep -q "Welcome to you Linux RISC-V" "$LOG" 2>/dev/null; then
+    if grep -qF "$GUEST_BANNER" "$LOG" 2>/dev/null; then
         echo "boot_test: PASS - reached the real shell"
         wait "$PID" 2>/dev/null || true
         rm -f "$LOG"
@@ -74,7 +76,7 @@ while [ $i -lt 120 ]; do
     if ! kill -0 "$PID" 2>/dev/null; then
         # process really has exited (not just "notification says so") -
         # one last check in case the success line landed between polls
-        if grep -q "Welcome to you Linux RISC-V" "$LOG" 2>/dev/null; then
+        if grep -qF "$GUEST_BANNER" "$LOG" 2>/dev/null; then
             echo "boot_test: PASS - reached the real shell"
             rm -f "$LOG"
             exit 0

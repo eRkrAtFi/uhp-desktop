@@ -13,8 +13,13 @@
 /SETUP.md
 
 # --- .NET build output (QemuManager/UHP.Core/QemuManager.SelfTest) ---
-[Bb]in/
-[Oo]bj/
+# Scoped to /QemuManager/ specifically, not a bare "[Bb]in/" - that
+# unscoped form (no leading slash, so it matches at ANY depth) silently
+# swallowed riscv-emu/buildroot/board/riscv-emu/rootfs-overlay/bin/
+# (a real rootfs overlay directory, not build output) until this was
+# caught while first staging the Buildroot files for commit.
+/QemuManager/**/[Bb]in/
+/QemuManager/**/[Oo]bj/
 *.user
 .vs/
 

@@ -1,0 +1,12 @@
+# busybox init table for the riscv-emu guest image. Auto-login straight
+# to a shell on ttyS0 - no login prompt, no password - via getty's own
+# -n/-l (run a given program instead of /bin/login), so Ctrl+C sent to
+# the guest's UART reaches a real foreground process under a real
+# controlling terminal, the same way it already does on the current
+# (undocumented-provenance) image this one replaces. See
+# ../rootfs-overlay/bin/riscv-emu-shell for why a wrapper script, not
+# /bin/sh directly, is what -l points at.
+::sysinit:/etc/init.d/rcS
+ttyS0::respawn:/sbin/getty -L -n -l /bin/riscv-emu-shell 115200 ttyS0 vt100
+::shutdown:/etc/init.d/rcK
+::ctrlaltdel:/sbin/reboot

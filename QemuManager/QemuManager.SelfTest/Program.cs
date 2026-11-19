@@ -23,6 +23,14 @@ using QemuManager.Services;
 // anything a real user's app instance would ever see.
 Environment.SetEnvironmentVariable("QEMUMANAGER_DATA_DIR", Path.Combine(Path.GetTempPath(), "QemuManagerSelfTestData"));
 
+// The one place this file checks for a riscv-emu shell having been
+// reached - previously six separate "~ #" literals. Still the OLD
+// (undocumented-provenance) image's own prompt as of this commit; update
+// this alongside riscv-emu/boot/guest-markers.sh's own GUEST_PROMPT, from
+// the real boot log, once the new Buildroot-built image is verified to
+// boot - not before (see that file's own remarks for why).
+const string GuestPrompt = "~ #";
+
 var qemuDir = args.Length > 0 ? args[0] : @"C:\Program Files\qemu";
 // riscv-emu/ lives as a sibling of QemuManager/ in this repo, so this
 // relative guess resolves correctly when run the documented way (`dotnet
@@ -181,7 +189,7 @@ if (RiscvEmuLocator.LooksLikeRiscvEmuDir(riscvEmuDir))
             var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
             while (DateTime.UtcNow < deadline)
             {
-                lock (console) { if (console.ToString().Contains("~ #")) break; }
+                lock (console) { if (console.ToString().Contains(GuestPrompt)) break; }
                 if (!mgr.IsRunning(vm.Id)) break;
                 await Task.Delay(200);
             }
@@ -226,8 +234,8 @@ if (RiscvEmuLocator.LooksLikeRiscvEmuDir(riscvEmuDir))
         {
             var vm1 = new VmConfig { Kind = "RiscvEmu", Name = "riscv-emu demo", KernelPath = kernelPath, InitrdPath = File.Exists(initrdPath) ? initrdPath : "" };
             var (vmId, console, mgr) = await BootToShell(vm1, 20000);
-            var reachedShell = console.ToString().Contains("~ #");
-            Console.WriteLine($"Reached '~ #' prompt: {reachedShell}");
+            var reachedShell = console.ToString().Contains(GuestPrompt);
+            Console.WriteLine($"Reached '{GuestPrompt}' prompt: {reachedShell}");
             if (reachedShell)
             {
                 var before = console.Length;
@@ -259,7 +267,7 @@ if (RiscvEmuLocator.LooksLikeRiscvEmuDir(riscvEmuDir))
             var oldVm = System.Text.Json.JsonSerializer.Deserialize<VmConfig>(oldJson)!;
             Console.WriteLine($"Deserialized old-format VM - DiskPath='{oldVm.DiskPath}' NetworkMode='{oldVm.NetworkMode}' MemoryMB={oldVm.MemoryMB}");
             var (vmId, console, mgr) = await BootToShell(oldVm, 20000);
-            Console.WriteLine($"Old-format VM reached '~ #' prompt: {console.ToString().Contains("~ #")}");
+            Console.WriteLine($"Old-format VM reached '{GuestPrompt}' prompt: {console.ToString().Contains(GuestPrompt)}");
             mgr.ForceStop(oldVm);
             await Task.Delay(300);
         }
@@ -275,8 +283,8 @@ if (RiscvEmuLocator.LooksLikeRiscvEmuDir(riscvEmuDir))
                 DiskPath = diskPath3, NetworkMode = "user",
             };
             var (vmId, console, mgr) = await BootToShell(vm3, 20000);
-            var reachedShell = console.ToString().Contains("~ #");
-            Console.WriteLine($"Reached '~ #' prompt: {reachedShell}");
+            var reachedShell = console.ToString().Contains(GuestPrompt);
+            Console.WriteLine($"Reached '{GuestPrompt}' prompt: {reachedShell}");
             if (reachedShell)
             {
                 var before = console.Length;
@@ -328,7 +336,7 @@ if (RiscvEmuLocator.LooksLikeRiscvEmuDir(riscvEmuDir))
             var (vmId, console, mgr) = await BootToShell(vm5, 20000);
             var exited = false;
             mgr.ProcessExited += id => { if (id == vmId) exited = true; };
-            if (console.ToString().Contains("~ #"))
+            if (console.ToString().Contains(GuestPrompt))
             {
                 var before = console.Length;
                 SendLine(mgr, vmId, vm5.ShutdownCommand);

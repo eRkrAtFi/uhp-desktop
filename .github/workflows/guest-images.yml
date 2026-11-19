@@ -1,0 +1,122 @@
+name: Guest images (Buildroot)
+
+# Separate, deliberately narrow triggers - unlike ci.yml/release.yml
+# (both windows-latest), this builds the riscv64 kernel + initramfs on a
+# Linux runner via Buildroot, which is slow (a real kernel+toolchain
+# build) and has no reason to run on every push. Path-filtered to only
+# riscv-emu/buildroot/** changes, plus an explicit manual trigger and its
+# own release tag - the app's own `v*` releases never carry a guest
+# image, and a guest-images release never carries the app.
+on:
+  push:
+    # branches+paths are ANDed (only a main push that touches these
+    # paths triggers); tags is a separate union with that, not filtered
+    # by paths at all (GitHub does not evaluate path filters for tag
+    # pushes) - so a guest-images-v* tag always triggers regardless of
+    # what changed. One block, not two: YAML does not allow a second
+    # `push:` key in the same `on:` mapping.
+    branches: [main]
+    paths:
+      - "riscv-emu/buildroot/**"
+      - ".github/workflows/guest-images.yml"
+    tags:
+      - "guest-images-v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout Buildroot
+        uses: actions/checkout@v4
+        with:
+          repository: buildroot/buildroot
+          ref: "2026.08.2"
+          path: buildroot
+
+      # dl/ (every package's fetched source tarball, including the
+      # Bootlin toolchain archive) is the expensive-to-refetch part;
+      # ccache speeds up the kernel/busybox *rebuild* when the config
+      # hasn't changed but something upstream (e.g. the pinned kernel
+      # patch level) has. Keyed on this image's own config files, not on
+      # Buildroot's own version, so bumping BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE
+      # or editing the kernel fragment correctly busts it.
+      - name: Cache Buildroot downloads + ccache
+        uses: actions/cache@v4
+        with:
+          path: |
+            buildroot/dl
+            ~/.buildroot-ccache
+          key: guest-images-${{ hashFiles('riscv-emu/buildroot/**') }}
+          restore-keys: guest-images-
+
+      - name: Install host build dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential bc bison flex libssl-dev libelf-dev rsync cpio unzip
+
+      - name: Configure
+        run: |
+          cp riscv-emu/buildroot/configs/riscv_emu_defconfig buildroot/configs/
+          mkdir -p buildroot/board/riscv-emu
+          cp -r riscv-emu/buildroot/board/riscv-emu/. buildroot/board/riscv-emu/
+          cd buildroot
+          make O=output riscv_emu_defconfig
+
+      - name: Build
+        run: |
+          cd buildroot
+          make O=output BR2_CCACHE=y BR2_CCACHE_DIR=~/.buildroot-ccache
+
+      # Point 3: every option in the kernel config fragment must have
+      # survived, unchanged, into the kernel actually built - fail here,
+      # by name, rather than discover a dropped option later as an
+      # unexplained missing device.
+      - name: Verify kernel config fragment survived
+        run: |
+          bash riscv-emu/buildroot/scripts/verify-config-fragment.sh \
+            riscv-emu/buildroot/board/riscv-emu/linux-riscv-emu.config \
+            buildroot/output/build/linux-*/.config
+
+      - name: Verify busybox config fragment survived
+        run: |
+          bash riscv-emu/buildroot/scripts/verify-config-fragment.sh \
+            riscv-emu/buildroot/board/riscv-emu/busybox-riscv-emu.config \
+            buildroot/output/build/busybox-*/.config
+
+      - name: Collect legal-info
+        run: |
+          cd buildroot
+          make O=output legal-info
+
+      - name: Package artifacts
+        run: |
+          mkdir -p artifacts
+          cp buildroot/output/images/Image artifacts/KernelImage
+          cp buildroot/output/images/rootfs.cpio.gz artifacts/initramfs.cpio.gz
+          tar czf guest-images.tar.gz -C artifacts KernelImage initramfs.cpio.gz
+          tar czf guest-images-legal-info.tar.gz -C buildroot/output/legal-info .
+          sha256sum guest-images.tar.gz guest-images-legal-info.tar.gz > guest-images-sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: guest-images
+          path: |
+            guest-images.tar.gz
+            guest-images-legal-info.tar.gz
+            guest-images-sha256.txt
+
+      # Only on the dedicated guest-images-v* tag - a workflow_dispatch
+      # or a plain push to main builds and verifies, but does not publish
+      # a release on its own.
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/guest-images-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            guest-images.tar.gz
+            guest-images-legal-info.tar.gz
+          generate_release_notes: true

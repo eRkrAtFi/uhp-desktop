@@ -1,0 +1,82 @@
+
+# riscv-emu guest image - a from-scratch, fully reproducible replacement
+# for the kernel+initramfs used during this project's own development,
+# whose actual source/license provenance was never recorded (see
+# THIRD_PARTY.md). Built against Buildroot 2026.08.2 (pin the Buildroot
+# checkout itself to this tag in CI - this defconfig alone does not pin
+# Buildroot's own version).
+#
+# Targets exactly the device set riscv-emu/src/emu.h and dtb.c already
+# implement - CLINT+Sstc, PLIC, 16550 UART, virtio-mmio (blk+net),
+# goldfish RTC, the syscon-poweroff test-finisher node - nothing more,
+# nothing guessed. See board/riscv-emu/linux-riscv-emu.config for the
+# kernel side of that; this file is Buildroot's own top-level config.
+
+BR2_riscv=y
+BR2_riscv_g=y
+# rv64gc, not plain rv64g: riscv-emu's own cpu.c DOES expand compressed
+# (RVC) instructions (see its "C extension" comment block) - BR2_riscv_g
+# alone only selects I/M/A/F/D (confirmed directly against Buildroot
+# 2026.08.2's own arch/Config.in.riscv: there is no combined "gc" choice
+# entry, C is this separate toggle, not gated by the G/custom choice).
+# No other BR2_RISCV_ISA_* symbol is set and BR2_RISCV_ISA_EXTRA is left
+# empty/unset - Buildroot has no individual Zb*/V/etc. toggles of its own
+# (only reachable via that one free-text field), so leaving it empty is
+# how "nothing beyond G+C" is expressed at this layer. The kernel side of
+# "nothing beyond G+C" - explicitly disabling every optional ISA
+# extension Kconfig that defaults to on - is linux-riscv-emu.config.
+BR2_RISCV_ISA_RVC=y
+BR2_RISCV_64=y
+BR2_RISCV_ABI_LP64D=y
+BR2_USE_MMU=y
+
+# External prebuilt toolchain (Bootlin, riscv64-lp64d/musl/stable) instead
+# of Buildroot building its own gcc/binutils from source - musl (not
+# glibc): smaller, the standard embedded-appliance choice, and this image
+# has no reason to need glibc's extra size/features. No V, Zba/Zbb, or
+# any other extension riscv-emu does not implement - "g" (IMAFD + Zicsr +
+# Zifencei) is the ceiling.
+BR2_TOOLCHAIN_EXTERNAL=y
+BR2_TOOLCHAIN_EXTERNAL_BOOTLIN=y
+BR2_TOOLCHAIN_EXTERNAL_BOOTLIN_RISCV64_LP64D_MUSL_STABLE=y
+
+# Linux kernel, pinned to an exact longterm release - not "whatever is
+# newest at build time" - so a rebuild from this same defconfig is
+# actually reproducible. Bump this value deliberately (a real commit,
+# not an automatic drift) when picking up a newer 6.18.z fix release.
+BR2_LINUX_KERNEL=y
+BR2_LINUX_KERNEL_CUSTOM_VERSION=y
+BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="6.18.64"
+BR2_LINUX_KERNEL_USE_ARCH_DEFAULT_CONFIG=y
+BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="board/riscv-emu/linux-riscv-emu.config"
+BR2_LINUX_KERNEL_IMAGE=y
+
+# riscv-emu is its own M-mode firmware (boot/firmware.S) - not OpenSBI,
+# not U-Boot. Deliberately not selecting BR2_TARGET_OPENSBI or any
+# bootloader package; main.c's --kernel path reads the Image header's
+# own text_offset directly, the same way boot/boot.sh already does today.
+
+# Initramfs only (cpio+gzip) - no separate disk rootfs image. A real
+# virtio-blk disk, when the VM has one, is attached separately via
+# --disk/DiskPath, formatted from inside the guest (see fs-compare) -
+# it is not this build's job to produce one.
+BR2_TARGET_ROOTFS_CPIO=y
+BR2_TARGET_ROOTFS_CPIO_GZIP=y
+
+BR2_ROOTFS_OVERLAY="board/riscv-emu/rootfs-overlay"
+
+# DHCP on eth0 at boot - Buildroot's own system-level option, not a
+# hand-rolled rcS udhcpc line.
+BR2_SYSTEM_DHCP="eth0"
+
+BR2_INIT_BUSYBOX=y
+BR2_PACKAGE_BUSYBOX=y
+BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES="board/riscv-emu/busybox-riscv-emu.config"
+
+BR2_TARGET_GENERIC_HOSTNAME="riscv-emu"
+# No BR2_TARGET_GENERIC_ISSUE - board/riscv-emu/rootfs-overlay/etc/issue
+# (applied after package install) is the only /etc/issue this image has;
+# letting Buildroot generate its own first would just be overwritten.
+BR2_ENABLE_LOCALE_PURGE=y
+
+BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_6_18=y

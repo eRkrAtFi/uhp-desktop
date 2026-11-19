@@ -1,0 +1,15 @@
+#!/bin/sh
+# What inittab's getty line actually runs on ttyS0, instead of /bin/sh
+# directly - a plain, non-login /bin/sh invocation does not reliably
+# source /etc/profile (that is login-shell-specific behavior). `-l`
+# makes the replacement shell a real login shell, so /etc/profile (and
+# this image's own /etc/profile.d/zz-riscv-emu-prompt.sh, which is what
+# actually sets PS1 - see its own comment for why setting PS1 here
+# instead would just get silently overwritten) runs the normal way.
+#
+# No "$@": getty's own `-l /bin/riscv-emu-shell` invocation passes the
+# tty name (e.g. "ttyS0") as $1 - forwarding that to `sh -l` would make
+# ash treat it as a script FILE to run non-interactively instead of
+# giving an interactive prompt at all. This wrapper exists specifically
+# to swallow that argument before exec, not to pass it through.
+exec /bin/sh -l
