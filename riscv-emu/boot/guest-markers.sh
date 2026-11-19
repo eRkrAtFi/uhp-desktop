@@ -6,10 +6,15 @@
 # one shell-side place to edit (this file) and one C#-side place
 # (QemuManager.SelfTest/Program.cs's own GuestPrompt constant).
 #
-# Still the OLD (undocumented-provenance) image's own values as of this
-# commit - do NOT change these ahead of actually booting the new
-# Buildroot-built image. See THIRD_PARTY.md / the Buildroot guest-images
-# plan for why, and update both this file and GuestPrompt together, from
-# the real boot log, once that image is verified to boot.
-GUEST_BANNER="Welcome to you Linux RISC-V"
-GUEST_PROMPT='~ #'
+# Updated from a real boot log of the Buildroot-built image (riscv-emu
+# and real qemu-system-riscv64 both reach this same prompt). getty's own
+# -n/-l bypass (see rootfs-overlay/etc/inittab) means /bin/login never
+# runs, so /etc/issue is never actually printed during boot the way a
+# normal login prompt would show it - there is no separate "banner" line
+# distinct from the prompt itself any more, so both variables are the
+# same text. GUEST_BANNER is kept (rather than having boot_test.sh
+# switch to GUEST_PROMPT directly) only so a future image that DOES have
+# a separate boot banner has somewhere to put it without another round
+# of grep/call-site changes.
+GUEST_BANNER='riscv-emu#'
+GUEST_PROMPT='riscv-emu#'

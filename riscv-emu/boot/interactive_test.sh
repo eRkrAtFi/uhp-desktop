@@ -40,7 +40,14 @@ cleanup() { rm -f "$ERRLOG"; }
 trap cleanup EXIT
 
 coproc BOOT { sh boot/boot.sh --deterministic-time --max 1500000000 > "$LOG" 2> "$ERRLOG"; }
-PID=$!
+# boot_pid, not BOOT_PID - `coproc NAME { ...; }` auto-creates both a
+# NAME array (fds) and a NAME_PID scalar, and bash unsets both once the
+# coprocess exits and gets reaped. This script's own BOOT/boot_pid
+# naming never collided (this file has no `set -u` either, so it would
+# only have misbehaved quietly, not crashed), but fs_compare.sh's own
+# RISCV/RISCV_PID pairing did collide and crashed under its `set -u` -
+# same naming convention here now, deliberately, not by accident.
+boot_pid=$!
 
 echo "interactive_test: waiting for the shell prompt (log: $LOG)"
 i=0
@@ -48,7 +55,7 @@ while [ $i -lt 60 ]; do
     if grep -qF "$GUEST_PROMPT" "$LOG" 2>/dev/null; then
         break
     fi
-    if ! kill -0 "$PID" 2>/dev/null; then
+    if ! kill -0 "$boot_pid" 2>/dev/null; then
         echo "interactive_test: FAIL - boot exited before reaching a shell"
         echo "interactive_test: last real kernel output:"
         grep -v '^riscv-emu:' "$LOG" | tail -n 20
@@ -60,7 +67,7 @@ while [ $i -lt 60 ]; do
 done
 if [ $i -ge 60 ]; then
     echo "interactive_test: FAIL - timed out waiting for the shell prompt"
-    kill "$PID" 2>/dev/null || true
+    kill "$boot_pid" 2>/dev/null || true
     echo "interactive_test: full log kept at $LOG"
     exit 1
 fi
@@ -76,7 +83,7 @@ while [ $i -lt 20 ]; do
         # output), not just as a substring of the line that typed it
         if grep -qx 'INTERACTIVE_TEST_OK' "$LOG" 2>/dev/null; then
             echo "interactive_test: PASS - command was echoed and executed"
-            kill "$PID" 2>/dev/null || true
+            kill "$boot_pid" 2>/dev/null || true
             rm -f "$LOG"
             exit 0
         fi
@@ -89,5 +96,5 @@ echo "interactive_test: FAIL - command sent but never echoed back"
 echo "interactive_test: last real kernel output:"
 grep -v '^riscv-emu:' "$LOG" | tail -n 20
 echo "interactive_test: full log kept at $LOG"
-kill "$PID" 2>/dev/null || true
+kill "$boot_pid" 2>/dev/null || true
 exit 1

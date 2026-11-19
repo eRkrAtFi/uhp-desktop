@@ -24,12 +24,11 @@ using QemuManager.Services;
 Environment.SetEnvironmentVariable("QEMUMANAGER_DATA_DIR", Path.Combine(Path.GetTempPath(), "QemuManagerSelfTestData"));
 
 // The one place this file checks for a riscv-emu shell having been
-// reached - previously six separate "~ #" literals. Still the OLD
-// (undocumented-provenance) image's own prompt as of this commit; update
-// this alongside riscv-emu/boot/guest-markers.sh's own GUEST_PROMPT, from
-// the real boot log, once the new Buildroot-built image is verified to
-// boot - not before (see that file's own remarks for why).
-const string GuestPrompt = "~ #";
+// reached - previously six separate "~ #" literals. Updated from a real
+// boot log of the Buildroot-built image, alongside riscv-emu/boot/
+// guest-markers.sh's own GUEST_PROMPT (see its remarks for why there is
+// no trailing space and no separate banner text any more).
+const string GuestPrompt = "riscv-emu#";
 
 var qemuDir = args.Length > 0 ? args[0] : @"C:\Program Files\qemu";
 // riscv-emu/ lives as a sibling of QemuManager/ in this repo, so this
