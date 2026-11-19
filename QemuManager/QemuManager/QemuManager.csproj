@@ -71,7 +71,14 @@
       <Output TaskParameter="ConsoleOutput" PropertyName="GitHashOutput" />
       <Output TaskParameter="ExitCode" PropertyName="GitHashExitCode" />
     </Exec>
-    <Exec Command="git status --porcelain" ConsoleToMSBuild="true" StandardOutputImportance="low" ContinueOnError="true">
+    <!-- --untracked-files=no: matches git describe --dirty's own
+         convention - an untracked file (e.g. a pending-approval
+         riscv-emu/buildroot/ directory deliberately kept out of git
+         until reviewed) says nothing about whether the SOURCE this
+         build actually compiled matches HEAD, which is the only thing
+         -dirty is meant to warn about. Confirmed this was the actual
+         cause of an otherwise-clean HEAD still publishing as -dirty. -->
+    <Exec Command="git status --porcelain --untracked-files=no" ConsoleToMSBuild="true" StandardOutputImportance="low" ContinueOnError="true">
       <Output TaskParameter="ConsoleOutput" PropertyName="GitStatusOutput" />
     </Exec>
     <PropertyGroup>
