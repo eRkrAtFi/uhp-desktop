@@ -9,12 +9,14 @@
 # static file does not work for QEMU's own -nographic stdio backend (the
 # guest reached its shell prompt with every scripted command silently
 # missing, not even echoed, let alone run).
-#  - QEMU: `( eval "$CMDS" ) | qemu-system-riscv64 ... &`, a fixed-delay
-#    scripted producer - a coproc's write fd went bad ("Bad file
-#    descriptor") once left open and idle for a few seconds before the
-#    first write, something riscv-emu.exe never did, and a named fifo
-#    has its own, separately-documented problem with riscv-emu.exe (see
-#    README's "Phase 5, finished").
+#  - QEMU: a bash function (qemu_producer, see its own section below)
+#    piped straight into qemu-system-riscv64 ... &` - a coproc's write fd
+#    went bad ("Bad file descriptor") once left open and idle for a few
+#    seconds before the first write, something riscv-emu.exe never did,
+#    and a named fifo has its own, separately-documented problem with
+#    riscv-emu.exe (see README's "Phase 5, finished") - this keeps the
+#    same plain-pipe shape that sidesteps both, while still pacing
+#    commands off real feedback instead of a blind sleep (see below).
 #  - riscv-emu: a coproc, polling its own output for GUEST_PROMPT before
 #    sending anything. Needed because riscv-emu's own boot-to-prompt time
 #    is not as predictable as real QEMU's - a fixed pre-command delay
@@ -25,27 +27,48 @@
 #    silently lost - nothing left to read once the guest caught up).
 #
 # Every $VARIABLE meant for the GUEST to evaluate (its own $? above all)
-# must reach the guest completely literally - confirmed directly this
-# was NOT happening for QEMU's own leg: CMDS's embedded
-# `printf "...echo MOUNT_RC=$?\n"` lines are DOUBLE-quoted, and CMDS
-# itself gets re-parsed and executed (by `eval`) before anything reaches
-# the guest - at that point bash evaluates $? for real, substituting
-# ITS OWN last exit status (always 0, from the sleep right before each
-# printf), not the guest's. The guest received an already-baked-in "0"
-# no matter what its own mount/umount command actually did - a real
-# correctness bug, not just a cosmetic transcript mismatch (a diff
-# between riscv-emu's and QEMU's own transcripts could still "pass" even
-# if a command genuinely failed in the guest, as long as both sides
-# happened to send the same wrong, pre-baked "0"). Fixed by escaping
-# ($?  -> \$?) every such reference inside CMDS, so it survives eval's
-# own re-parse as a literal two-character "$?" the guest's own shell
-# evaluates itself - the same reason riscv-emu's own commands (sent via
-# individual single-quoted `printf '...$?...'` calls, never re-parsed by
-# anything) never had this problem in the first place. A deliberately
-# failing command (`false; echo FALSE_RC=$?`) is included in both legs'
-# own sequence specifically so this script's own correctness-check step
-# further down can catch a regression of this exact bug automatically,
-# not just a human noticing a suspicious "0".
+# must reach the guest completely literally. QEMU's own leg used to send
+# a single `eval`-executed, double-quoted CMDS block, which evaluated
+# $? itself (bash's own, always 0) before the guest ever saw it - a real
+# correctness bug, not just cosmetic (a diff between both transcripts
+# could still "pass" even if a command genuinely failed in the guest, as
+# long as both sides happened to send the same wrong, pre-baked "0").
+# Fixed by moving QEMU's own leg to individual single-quoted
+# `qemu_send '...$?...'` calls (a real bash function call, never
+# `eval`-reparsed), the same reason riscv-emu's own commands never had
+# this problem in the first place. A deliberately failing command
+# (`false; echo FALSE_RC=$?`) is still included in both legs' own
+# sequence so this script's own correctness-check step further down can
+# catch a regression of this exact bug automatically, not just a human
+# noticing a suspicious "0".
+#
+# QEMU's own leg paces each command on a REAL fresh prompt, not a fixed
+# sleep, for the same reason riscv-emu's own leg polls for its first
+# prompt: confirmed directly (a real CI run, on GitHub Actions' own
+# Windows runners - never reproduced locally, including right before and
+# right after on the same machine) that a fixed per-command sleep was
+# too tight there. What happened was not a $?-evaluation bug recurring -
+# it was real input characters lost in transit: one command's own
+# `printf` landed while an async kernel printk (ext2's own "filesystem
+# being mounted at ..." notice, which fires from a different kernel
+# context than the shell's synchronous tty echo) was hitting the same
+# console at the same real moment, scrambling/truncating what the guest
+# actually received - not just what the transcript shows (the
+# corresponding RC= line was missing entirely afterward, not merely
+# wrong). A real 16550 UART modeled accurately enough to lose characters
+# under genuine RX/TX contention is a plausible, real explanation for why
+# riscv-emu's own simpler UART apparently never reproduces this. Waiting
+# for the shell to actually be back at an idle prompt before typing
+# anything else removes the precondition for that race, rather than
+# tuning fixed delays to be "probably long enough" on a host whose own
+# real timing cannot be controlled from here.
+#
+# A fresh, idle prompt is told apart from the echo of what was just
+# typed (which also starts with the same prompt string) by COUNT, not
+# content: sending one line produces exactly two more occurrences of
+# GUEST_PROMPT in the live output - one echoing the typed line back, one
+# for the fresh prompt once the command's own output is done - so
+# qemu_send waits for the count to grow by 2, not just 1.
 #
 # Process identification: `$!` right after backgrounding a pipeline is
 # the PID of the pipeline's LAST member - confirmed directly, including
@@ -122,6 +145,66 @@ export MSYS2_ARG_CONV_EXCL="*"
 # "nothing to kill", not an error.
 win_pid() {
     cat "/proc/$1/winpid" 2>/dev/null
+}
+
+# Shared by both legs. Counts how many times $GUEST_PROMPT has appeared
+# in a transcript so far, \r-stripped first - confirmed directly (a real
+# CI run's own raw output, inspected byte-for-byte) that this guest's own
+# tty really does emit \r\n, not just \n, same as any ordinary
+# interactive Linux tty with its default ONLCR output translation. Some
+# grep builds appear to tolerate this silently (a real CI run's own
+# FALSE_RC=1 check, further down, passed despite it) and some might not -
+# not something to depend on either way, since it was never deliberately
+# verified to hold rather than merely observed once.
+prompt_count() {
+    tr -d '\r' < "$1" 2>/dev/null | grep -cF "$GUEST_PROMPT"
+}
+
+# Sends $3 to fd $2, then waits for a REAL fresh prompt to appear in $1,
+# not the existing one $cmd's own echo lands on - the shell prints its
+# prompt ONCE, with nothing after it until something is typed, and
+# whatever is typed is echoed by the tty onto that SAME line (exactly
+# like a real terminal: "$ " then typing "ls" shows "$ ls" on one line,
+# not a second "$" of its own) - so sending one command produces exactly
+# ONE new occurrence of GUEST_PROMPT (the next idle prompt, once the
+# command's own output is done), not two (confirmed directly: an
+# earlier version of this waited for +2 and never once saw it, since the
+# count genuinely only ever grows by 1 per command). $4 (default 40s) is
+# a timeout safety net, $5 a short label for diagnostics (e.g.
+# "riscv-emu"/"QEMU").
+#
+# Replaces this script's own earlier fixed-sleep pacing for both legs -
+# confirmed directly (a real CI run on GitHub Actions' own Windows
+# runners, never reproduced locally before or after on the same machine)
+# that a fixed per-command sleep was too tight there: one command's own
+# `printf` landed while an async kernel printk (ext2's own "filesystem
+# being mounted at ..." notice, which fires from a different kernel
+# context than the shell's synchronous tty echo) was hitting the same
+# console at the same real moment, and real input characters were lost
+# in transit, not just garbled in the visible transcript - the
+# corresponding RC= line was missing entirely afterward, not merely
+# wrong. A real 16550 UART modeled accurately enough to lose characters
+# under genuine RX/TX contention is a plausible, real explanation for why
+# riscv-emu's own simpler UART apparently never reproduces this - but
+# both legs are moved to this same wait-for-a-real-prompt pacing, not
+# just QEMU's, since a fixed sleep on the riscv-emu side is exactly the
+# same kind of guess about "probably long enough" on a host whose real
+# timing cannot be controlled from here.
+send_and_wait() {
+    local out_file="$1" fd="$2" cmd="$3" timeout="${4:-40}" label="$5" before tries
+    before=$(prompt_count "$out_file")
+    printf '%s\n' "$cmd" >&"$fd"
+    tries=0
+    while [ "$(prompt_count "$out_file")" -lt "$((before + 1))" ]; do
+        tries=$((tries + 1))
+        if [ "$tries" -ge "$timeout" ]; then
+            echo "fs_compare: FAIL - $label did not respond within ${timeout}s to: $cmd" >&2
+            echo "fs_compare: last output:" >&2
+            tail -n 20 "$out_file" >&2
+            return 1
+        fi
+        sleep 1
+    done
 }
 
 WORKDIR=$(mktemp -d)
@@ -207,10 +290,7 @@ coproc RISCV { RISCV_EMU_DISK="$RISCV_DISK_WIN" sh boot/boot.sh --deterministic-
 riscv_pid=$!
 
 i=0
-while [ $i -lt 90 ]; do
-    if grep -qF "$GUEST_PROMPT" "$RISCV_OUT" 2>/dev/null; then
-        break
-    fi
+while [ "$(prompt_count "$RISCV_OUT")" -lt 1 ]; do
     if ! kill -0 "$riscv_pid" 2>/dev/null; then
         echo "fs_compare: FAIL - riscv-emu exited before reaching a shell" >&2
         echo "fs_compare: last output:" >&2
@@ -218,34 +298,26 @@ while [ $i -lt 90 ]; do
         exit 1
     fi
     i=$((i + 1))
+    if [ $i -ge 90 ]; then
+        echo "fs_compare: FAIL - timed out waiting for riscv-emu's shell prompt" >&2
+        echo "fs_compare: last output:" >&2
+        tail -n 20 "$RISCV_OUT" >&2
+        exit 1
+    fi
     sleep 1
 done
-if [ $i -ge 90 ]; then
-    echo "fs_compare: FAIL - timed out waiting for riscv-emu's shell prompt" >&2
-    echo "fs_compare: last output:" >&2
-    tail -n 20 "$RISCV_OUT" >&2
-    exit 1
-fi
 
-# Same commands CMDS (below, QEMU's own leg) sends, just delivered one at
-# a time through the coproc's own write fd instead of pre-scripted into a
-# pipe - see this script's own top comment for why the two legs differ.
-# Every printf here is single-quoted, so $? is never evaluated by this
+# Same commands QEMU's own leg (qemu_producer, further down) sends -
+# see this script's own top comment for send_and_wait/prompt_count.
+# Every command here is single-quoted, so $? is never evaluated by this
 # script itself - it reaches the guest completely literally, for the
-# guest's own shell to evaluate (see this script's own top comment on
-# why that matters).
-printf 'mkfs.ext2 -F /dev/vda 2>&1\n' >&"${RISCV[1]}"
-sleep 3
-printf 'mkdir -p /mnt/disk\n' >&"${RISCV[1]}"
-sleep 1
-printf 'mount -t ext2 /dev/vda /mnt/disk 2>&1; echo MOUNT_RC=$?\n' >&"${RISCV[1]}"
-sleep 3
-printf 'false; echo FALSE_RC=$?\n' >&"${RISCV[1]}"
-sleep 1
-printf 'echo "hello from ext2 on virtio-blk" > /mnt/disk/testfile.txt; sync; md5sum /mnt/disk/testfile.txt; cat /mnt/disk/testfile.txt\n' >&"${RISCV[1]}"
-sleep 3
-printf 'umount /mnt/disk; echo UMOUNT_RC=$?\n' >&"${RISCV[1]}"
-sleep 3
+# guest's own shell to evaluate.
+send_and_wait "$RISCV_OUT" "${RISCV[1]}" 'mkfs.ext2 -F /dev/vda 2>&1' 40 "riscv-emu" || exit 1
+send_and_wait "$RISCV_OUT" "${RISCV[1]}" 'mkdir -p /mnt/disk' 40 "riscv-emu" || exit 1
+send_and_wait "$RISCV_OUT" "${RISCV[1]}" 'mount -t ext2 /dev/vda /mnt/disk 2>&1; echo MOUNT_RC=$?' 40 "riscv-emu" || exit 1
+send_and_wait "$RISCV_OUT" "${RISCV[1]}" 'false; echo FALSE_RC=$?' 40 "riscv-emu" || exit 1
+send_and_wait "$RISCV_OUT" "${RISCV[1]}" 'echo "hello from ext2 on virtio-blk" > /mnt/disk/testfile.txt; sync; md5sum /mnt/disk/testfile.txt; cat /mnt/disk/testfile.txt' 40 "riscv-emu" || exit 1
+send_and_wait "$RISCV_OUT" "${RISCV[1]}" 'umount /mnt/disk; echo UMOUNT_RC=$?' 40 "riscv-emu" || exit 1
 
 # Point 1 of the fix: a real "poweroff", waited for, not a blind
 # sleep-then-kill. riscv-emu already exits on its own in response to
@@ -279,47 +351,49 @@ echo "fs_compare: riscv-emu exited cleanly after poweroff"
 echo "fs_compare: booting real qemu-system-riscv64..."
 KERNEL=boot/KernelImage
 INITRD=boot/initramfs.cpio.gz
-# Same command sequence, same delays, sent identically every run - see
-# this script's own top comment for why QEMU's own leg still uses a
-# fixed-delay scripted pipe rather than the coproc/poll approach above.
-# The initial delay (was 8s, tuned for the OLD undocumented-provenance
-# image) had to grow a lot for the Buildroot-built image now replacing
-# it: that image boot-time network init blocks the console for roughly
-# 45s attempting DHCP on eth0 before giving up (the attempt itself is
-# harmless - a manual check after boot shows eth0 correctly configured
-# either way, udhcpc succeeds in the background regardless of what the
-# foreground wait_iface script reports - but the console is genuinely
-# busy printing its own "...timeout!" output during that window).
+# qemu_producer waits for a real prompt (see send_and_wait/prompt_count,
+# this script's own top comment) instead of a fixed-delay scripted
+# sequence. The initial wait still has no prompt to poll for until the
+# guest has booted at all - that image's own boot-time network init
+# blocks the console for roughly 45s attempting DHCP on eth0 before
+# giving up (harmless - a manual check after boot shows eth0 correctly
+# configured either way, udhcpc succeeds in the background regardless of
+# what the foreground wait_iface script reports - but the console is
+# genuinely busy printing its own "...timeout!" output during that
+# window) - so this polls for the first prompt rather than assuming a
+# fixed boot time, same as the riscv-emu leg above.
 #
-# Every $? here is escaped (\$?) - see this script's own top comment for
-# why an unescaped one gets evaluated by this script's own shell (via
-# `eval`, below) instead of staying literal for the guest. No
-# apostrophes in this comment block either way - CMDS below is single-
-# quoted, and one did exactly this (broke the quoting, corrupted the
-# rest of the script) the first time this was written.
-CMDS='
-sleep 60
-printf "mkfs.ext2 -F /dev/vda 2>&1\n"
-sleep 3
-printf "mkdir -p /mnt/disk\n"
-sleep 1
-printf "mount -t ext2 /dev/vda /mnt/disk 2>&1; echo MOUNT_RC=\$?\n"
-sleep 3
-printf "false; echo FALSE_RC=\$?\n"
-sleep 1
-printf "echo \"hello from ext2 on virtio-blk\" > /mnt/disk/testfile.txt; sync; md5sum /mnt/disk/testfile.txt; cat /mnt/disk/testfile.txt\n"
-sleep 3
-printf "umount /mnt/disk; echo UMOUNT_RC=\$?\n"
-sleep 3
-printf "poweroff\n"
-'
+# Runs as the LEFT member of the pipe below, so its own stdout (every
+# plain `printf` inside it, including send_and_wait's) feeds
+# qemu-system-riscv64's stdin - fd 1 passed to send_and_wait is exactly
+# that, no different from the riscv-emu leg passing its coproc's own
+# write fd.
+qemu_producer() {
+    local tries=0
+    while [ "$(prompt_count "$QEMU_OUT")" -lt 1 ]; do
+        tries=$((tries + 1))
+        if [ "$tries" -ge 90 ]; then
+            echo "fs_compare: FAIL - QEMU did not reach a shell prompt within 90s" >&2
+            tail -n 20 "$QEMU_OUT" >&2
+            return 1
+        fi
+        sleep 1
+    done
+    send_and_wait "$QEMU_OUT" 1 'mkfs.ext2 -F /dev/vda 2>&1' 40 "QEMU" || return 1
+    send_and_wait "$QEMU_OUT" 1 'mkdir -p /mnt/disk' 40 "QEMU" || return 1
+    send_and_wait "$QEMU_OUT" 1 'mount -t ext2 /dev/vda /mnt/disk 2>&1; echo MOUNT_RC=$?' 40 "QEMU" || return 1
+    send_and_wait "$QEMU_OUT" 1 'false; echo FALSE_RC=$?' 40 "QEMU" || return 1
+    send_and_wait "$QEMU_OUT" 1 'echo "hello from ext2 on virtio-blk" > /mnt/disk/testfile.txt; sync; md5sum /mnt/disk/testfile.txt; cat /mnt/disk/testfile.txt' 40 "QEMU" || return 1
+    send_and_wait "$QEMU_OUT" 1 'umount /mnt/disk; echo UMOUNT_RC=$?' 40 "QEMU" || return 1
+    printf 'poweroff\n'
+}
 
 # Point 1 of the fix: -no-reboot makes qemu-system-riscv64 exit on its
 # own once the guest genuinely powers off, instead of resetting. No
 # `bash -c "..." &` wrapper around this pipeline (an earlier version of
 # this script had one, "for quoting convenience") - see this script's
 # own top comment on process identification for why that broke $!.
-( eval "$CMDS" ) | qemu-system-riscv64 -M virt -smp 1 -m 256M -bios default \
+qemu_producer | qemu-system-riscv64 -M virt -smp 1 -m 256M -bios default \
     -kernel "$KERNEL" -initrd "$INITRD" \
     -append 'console=ttyS0 earlycon=sbi rdinit=/init loglevel=7' \
     -drive if=none,file="$QEMU_DISK_WIN",format=raw,id=d0 \
@@ -372,7 +446,7 @@ cp "$QEMU_OUT" "$LAST_RUN_DIR/qemu.out"
 for label_file in "riscv-emu:$RISCV_OUT" "QEMU:$QEMU_OUT"; do
     label="${label_file%%:*}"
     file="${label_file#*:}"
-    if ! grep -qx 'FALSE_RC=1' "$file"; then
+    if ! tr -d '\r' < "$file" | grep -qx 'FALSE_RC=1'; then
         echo "fs_compare: FAIL - $label never reported FALSE_RC=1 for the deliberately" >&2
         echo "fs_compare: failing command - \$? is not reaching the guest literally." >&2
         echo "fs_compare: last output:" >&2
@@ -405,8 +479,13 @@ echo "fs_compare: both sides correctly reported FALSE_RC=1 for the deliberately 
 #    match)
 #  - the line naming the random filesystem UUID (see this script's own
 #    top comment on why that is expected to differ, not a bug)
+#  - \r - this guest's own tty emits real \r\n, not just \n (confirmed
+#    directly, see prompt_count's own comment); stripped explicitly
+#    rather than relying on sed/grep to already tolerate it, same reason
+#    the FALSE_RC=1 check above does not rely on that either
 normalize() {
-    sed -n '/mkfs\.ext2 -F/,/^UMOUNT_RC=/p' "$1" \
+    tr -d '\r' < "$1" \
+        | sed -n '/mkfs\.ext2 -F/,/^UMOUNT_RC=/p' \
         | grep -v '^\[' \
         | grep -v 'filesystem.*-.*-.*-.*-'
 }
