@@ -59,19 +59,29 @@ jobs:
         shell: bash
 
       # boot-test/interactive-test/fs-compare all need a real riscv64
-      # Linux kernel+initramfs via --kernel, which this repo deliberately
-      # does not ship or fetch yet - see THIRD_PARTY.md and
-      # scripts/fetch-guest-images.sh's own comment for why (no
-      # independently-verifiable source for the kernel/initramfs used
-      # during development; a from-scratch Buildroot replacement is in
-      # progress). Run the fetch script first (it gets Alpine's own
-      # minirootfs, which *does* have a verified source, for free) and
-      # skip the kernel-dependent tests with a clear message rather than
-      # silently omitting them from this workflow.
-      - name: Fetch guest images (where a verified source exists)
+      # Linux kernel+initramfs via --kernel - a from-scratch, reproducible
+      # Buildroot build (see riscv-emu/buildroot/ and
+      # .github/workflows/guest-images.yml), published as a release asset
+      # since this repo deliberately does not commit it to git (see
+      # THIRD_PARTY.md). GH_TOKEN is required here specifically because
+      # this repo is private: scripts/fetch-guest-images.sh's own fetch
+      # of that asset goes through `gh release download`, not plain curl,
+      # since a private repo's release assets 404 for an unauthenticated
+      # request (confirmed directly) - GITHUB_TOKEN is what `gh` already
+      # auto-detects for this. A real fetch failure now fails this step
+      # (and the job) loudly rather than being silently tolerated - the
+      # kernel is no longer "not available yet" as a matter of course, so
+      # a failure here means something is actually wrong (bad token,
+      # asset renamed/deleted, ...) and deserves attention. The next
+      # step's own if/else check is for other invocation paths (a
+      # developer running these Makefile targets locally without having
+      # run this fetch step first), not for tolerating a failure here.
+      - name: Fetch guest images
         working-directory: riscv-emu
         run: bash scripts/fetch-guest-images.sh
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Kernel-dependent tests (boot-test/interactive-test/fs-compare)
         working-directory: riscv-emu
@@ -81,7 +91,7 @@ jobs:
             make interactive-test
             make fs-compare
           else
-            echo "::warning::Skipping boot-test/interactive-test/fs-compare - boot/KernelImage and boot/initramfs.cpio.gz are not available (no verified source yet; see THIRD_PARTY.md). This is expected, not a failure."
+            echo "::warning::Skipping boot-test/interactive-test/fs-compare - boot/KernelImage and boot/initramfs.cpio.gz are not available. Expected if the Fetch guest images step above did not run (e.g. a local invocation of just this Makefile target); it already fails this job loudly if it was expected to fetch them and could not."
           fi
         shell: bash
 

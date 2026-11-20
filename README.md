@@ -42,16 +42,23 @@ C and verified at every step against real QEMU.
    like a terminal (`Ctrl+C` works, arrow keys work, `Send Ctrl+C` button
    if you'd rather click).
 
-**A heads-up on the guest kernel:** this repo does not ship a riscv64
-Linux kernel/initramfs (see [`THIRD_PARTY.md`](THIRD_PARTY.md) for why -
-GPL source-availability obligations, and no confidently-known source for
-the specific binaries used during development). A Buildroot-based,
-from-scratch, fully-reproducible kernel+initramfs build (config committed
-to this repo, built in CI, published as release assets) is in progress -
-until it lands, you'll need your own riscv64 kernel Image to try
-`riscv-emu`, or stick to real QEMU VMs in the meantime, which need no
-kernel of their own (point UHP Desktop at an existing disk image/ISO the
-same way any QEMU front end would).
+**A heads-up on the guest kernel:** this repo does not commit a riscv64
+Linux kernel/initramfs to git (see [`THIRD_PARTY.md`](THIRD_PARTY.md) for
+why - GPL source-availability obligations, and no confidently-known
+source for the specific binaries used during this project's own early
+development). It is fetched instead: run
+`riscv-emu/scripts/fetch-guest-images.ps1` (or `.sh`) to download a real,
+from-scratch, fully reproducible Buildroot build (Linux 6.18.64 - see
+[`THIRD_PARTY.md`](THIRD_PARTY.md) for exactly what it targets and how it
+is verified) from this repo's own
+[`guest-images-v1`](../../releases/tag/guest-images-v1) release, then
+point a new riscv-emu VM at the `boot/KernelImage` and
+`boot/initramfs.cpio.gz` it extracts. That fetch needs the
+[GitHub CLI](https://cli.github.com/) (`gh`), signed in - this repo is
+private, so a release asset is not a plain anonymous download; the
+script's own error message says so if `gh` is missing or not
+authenticated. (Real QEMU VMs need neither - point UHP Desktop at an
+existing disk image/ISO the same way any QEMU front end would.)
 
 ## Quick start - building it
 

@@ -40,11 +40,34 @@ $AlpineUrl = "https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/riscv64/alpin
 $AlpineSha256 = "972e8257ffded92877ff9a09a8418c3eb7c6f0e49c9413461777d7279fdc4b2f"
 Fetch $AlpineUrl "tests/alpine-minirootfs.tar.gz" $AlpineSha256
 
-if (-not (Test-Path "boot/KernelImage") -or -not (Test-Path "boot/initramfs.cpio.gz")) {
-    Write-Host ""
-    Write-Host "fetch-guest-images: boot/KernelImage and boot/initramfs.cpio.gz are"
-    Write-Host "  not fetched by this script yet (no verified source - see"
-    Write-Host "  fetch-guest-images.sh's own comment). boot-test, interactive-test"
-    Write-Host "  and fs-compare need them and will fail until you provide your own,"
-    Write-Host "  built via Buildroot or otherwise, at those two paths."
+# boot/KernelImage and boot/initramfs.cpio.gz - see fetch-guest-images.sh's
+# own comment for the full reasoning (reproducible Buildroot build,
+# published as a GitHub Release asset). Fetched via `gh release download`,
+# not Invoke-WebRequest - this repo is private, so the asset's own
+# browser_download_url 404s for anyone not authenticated (confirmed
+# directly). `gh` resolves credentials from GH_TOKEN/GITHUB_TOKEN if set,
+# otherwise from a local `gh auth login`.
+function Fetch-GuestImagesRelease([string]$ReleaseTag, [string]$AssetName, [string]$Destination, [string]$ExpectedSha256) {
+    if (Test-Path $Destination) {
+        $got = (Get-FileHash -Path $Destination -Algorithm SHA256).Hash.ToLower()
+        if ($got -eq $ExpectedSha256.ToLower()) {
+            Write-Host "fetch-guest-images: $Destination already present and verified - skipping download"
+            return
+        }
+    }
+    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+        Write-Error "fetch-guest-images: FAIL - 'gh' (GitHub CLI) not found. This repo is private, so downloading a release asset needs it - install from https://cli.github.com/ and run 'gh auth login', or set GH_TOKEN/GITHUB_TOKEN (CI already does this for this exact step)."
+        exit 1
+    }
+    $dir = Split-Path -Parent $Destination
+    if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+    Write-Host "fetch-guest-images: downloading $AssetName from release $ReleaseTag (private repo - via gh, authenticated)"
+    gh release download $ReleaseTag --repo eRkrAtFi/uhp-desktop --pattern $AssetName --output $Destination --clobber
+    Verify-Sha256 $Destination $ExpectedSha256
 }
+
+$GuestImagesRelease = "guest-images-v1"
+$GuestImagesSha256 = "0c18c2c01acaf48f621dcd7a06644efcdf49f1aa2eb326cd6aca99360af912d7"
+Fetch-GuestImagesRelease $GuestImagesRelease "guest-images.tar.gz" "boot/guest-images.tar.gz" $GuestImagesSha256
+tar xzf "boot/guest-images.tar.gz" -C boot KernelImage initramfs.cpio.gz
+Write-Host "fetch-guest-images: extracted boot/KernelImage and boot/initramfs.cpio.gz from $GuestImagesRelease"

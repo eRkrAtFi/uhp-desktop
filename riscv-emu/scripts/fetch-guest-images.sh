@@ -46,23 +46,51 @@ ALPINE_URL="https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/riscv64/alpine-
 ALPINE_SHA256="972e8257ffded92877ff9a09a8418c3eb7c6f0e49c9413461777d7279fdc4b2f"
 fetch "$ALPINE_URL" "tests/alpine-minirootfs.tar.gz" "$ALPINE_SHA256"
 
-# boot/KernelImage and boot/initramfs.cpio.gz: intentionally NOT fetched
-# yet. The copies this project used during Phase 5/6 development have no
-# recorded, independently-verifiable source (see README's own history),
-# so neither their origin nor their license terms can be stated with
-# confidence - the opposite of what this script exists to guarantee for
-# everything else. They are being replaced with a Buildroot-built kernel
-# + busybox initramfs (config committed to this repo, built and
-# legal-info'd in CI, published as release assets) instead of guessing at
-# a replacement download URL here. Until that lands, boot-test/
-# interactive-test/fs-compare (which need --kernel) are skipped in CI and
-# will fail locally with a clear message if run without a kernel present
-# - see this script's own exit code/message below for exactly that.
-if [ ! -f "boot/KernelImage" ] || [ ! -f "boot/initramfs.cpio.gz" ]; then
-    echo ""
-    echo "fetch-guest-images: boot/KernelImage and boot/initramfs.cpio.gz are"
-    echo "  not fetched by this script yet (no verified source - see this"
-    echo "  script's own comment). boot-test, interactive-test and"
-    echo "  fs-compare need them and will fail until you provide your own,"
-    echo "  built via Buildroot or otherwise, at those two paths."
-fi
+# boot/KernelImage and boot/initramfs.cpio.gz: a from-scratch,
+# reproducible Buildroot build (config committed to this repo under
+# riscv-emu/buildroot/, built and legal-info'd in CI - see
+# .github/workflows/guest-images.yml) - replaces the kernel+initramfs
+# this project used during Phase 5/6 development, which had no
+# independently-verifiable recorded source at all (see THIRD_PARTY.md).
+# Published as a GitHub Release asset rather than committed to git (same
+# reasoning as Alpine's own tarball above, plus GPL source-availability
+# for the kernel/busybox themselves - satisfied by
+# guest-images-legal-info.tar.gz, attached to that same release, not
+# fetched by this script since nothing here needs it at runtime).
+#
+# Fetched via `gh release download`, not plain curl - this repo is
+# private (deliberately - see THIRD_PARTY.md's own remarks on why
+# everything else here still uses plain curl, that is all against
+# public, unauthenticated hosts), so a release asset's own
+# browser_download_url 404s for anyone not authenticated, confirmed
+# directly. `gh` already resolves credentials the same way everywhere:
+# GH_TOKEN/GITHUB_TOKEN if set (CI sets this explicitly for this step -
+# see ci.yml), otherwise whatever `gh auth login` already set up
+# locally.
+fetch_guest_images_release() {
+    # $1 = release tag, $2 = asset name, $3 = destination, $4 = expected sha256
+    if [ -f "$3" ]; then
+        got=$(sha256sum "$3" | cut -d' ' -f1)
+        if [ "$got" = "$4" ]; then
+            echo "fetch-guest-images: $3 already present and verified - skipping download"
+            return
+        fi
+    fi
+    if ! command -v gh >/dev/null 2>&1; then
+        echo "fetch-guest-images: FAIL - 'gh' (GitHub CLI) not found. This repo is" >&2
+        echo "  private, so downloading a release asset needs it - install from" >&2
+        echo "  https://cli.github.com/ and run 'gh auth login', or set GH_TOKEN/" >&2
+        echo "  GITHUB_TOKEN (CI already does this for this exact step)." >&2
+        exit 1
+    fi
+    mkdir -p "$(dirname "$3")"
+    echo "fetch-guest-images: downloading $2 from release $1 (private repo - via gh, authenticated)"
+    gh release download "$1" --repo eRkrAtFi/uhp-desktop --pattern "$2" --output "$3" --clobber
+    verify "$3" "$4"
+}
+
+GUEST_IMAGES_RELEASE="guest-images-v1"
+GUEST_IMAGES_SHA256="0c18c2c01acaf48f621dcd7a06644efcdf49f1aa2eb326cd6aca99360af912d7"
+fetch_guest_images_release "$GUEST_IMAGES_RELEASE" "guest-images.tar.gz" "boot/guest-images.tar.gz" "$GUEST_IMAGES_SHA256"
+tar xzf "boot/guest-images.tar.gz" -C boot KernelImage initramfs.cpio.gz
+echo "fetch-guest-images: extracted boot/KernelImage and boot/initramfs.cpio.gz from $GUEST_IMAGES_RELEASE"
