@@ -5,6 +5,11 @@ using QemuManager.Models;
 
 namespace QemuManager.Services;
 
+/// <summary>ShutdownAsync's own result. TimedOut is what the caller uses
+/// to decide whether to offer Force Stop - see ShutdownAsync's own
+/// remarks for why it is never acted on automatically.</summary>
+public readonly record struct ShutdownResult(string Message, bool TimedOut);
+
 /// <summary>
 /// The one thing a UI (or, eventually, a web API or CLI) needs to manage
 /// and drive VMs of either engine - QEMU or riscv-emu - without ever
@@ -65,11 +70,21 @@ public interface IVmService : IConsoleSource
 
     Task<string> StartAsync(VmConfig vm, AppSettings settings);
 
-    /// <summary>Graceful shutdown. For QEMU: ACPI power-down over QMP. For
-    /// riscv-emu: currently the same as ForceStop - there is no graceful
-    /// path wired up yet (Phase 4's job: send VmConfig.ShutdownCommand to
-    /// its console, with a timeout before Force Stop is offered).</summary>
-    Task<string> ShutdownAsync(VmConfig vm);
+    /// <summary>Graceful shutdown. For QEMU: ACPI power-down over QMP,
+    /// fire-and-forget (QEMU itself reports no further progress on it
+    /// over any channel this app reads, so there is nothing to wait on
+    /// here beyond the request being sent). For riscv-emu: types
+    /// VmConfig.ShutdownCommand at the guest's own console and genuinely
+    /// waits (up to settings.RiscvShutdownTimeoutSeconds) for the real
+    /// process to exit on its own - see
+    /// RiscvEmuProcessManager.ShutdownGracefullyAsync's own remarks for
+    /// why this never auto-escalates to Force Stop by itself.
+    /// ShutdownResult.TimedOut is false for QEMU always (sending the
+    /// ACPI request either succeeded or it did not - "the guest is still
+    /// deciding" is not a timeout in the same sense) and is what the UI
+    /// uses to decide whether to offer Force Stop for a riscv-emu VM that
+    /// did not respond in time.</summary>
+    Task<ShutdownResult> ShutdownAsync(VmConfig vm, AppSettings settings);
 
     /// <summary>What clicking "Console" on this VM should do right now -
     /// see <see cref="ConsoleAvailability"/>. The second value is the VNC

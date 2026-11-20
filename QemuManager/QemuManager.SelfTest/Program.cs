@@ -178,6 +178,13 @@ if (RiscvEmuLocator.LooksLikeRiscvEmuDir(riscvEmuDir))
         // Running" (which the block above already covered but which says
         // nothing about whether a human watching the console would see a
         // working VM). -----------------------------------------------------
+        // Every call site below passes 100000 (100s), not the original
+        // 20000 (20s): confirmed directly that the Buildroot-built image
+        // replacing the old one needs close to a minute just for its own
+        // boot-time network init to give up waiting on DHCP (see
+        // guest-markers.sh's own remarks) before the shell becomes
+        // interactive at all - the old image's own prompt showed up well
+        // within 20s.
         async Task<(string vmId, StringBuilder console, RiscvEmuProcessManager mgr)> BootToShell(VmConfig vm, int timeoutMs)
         {
             var mgr = new RiscvEmuProcessManager();
@@ -232,7 +239,7 @@ if (RiscvEmuLocator.LooksLikeRiscvEmuDir(riscvEmuDir))
         Console.WriteLine("\n--- Scenario 1: does it actually reach a shell, and does `uname -a` work? ---");
         {
             var vm1 = new VmConfig { Kind = "RiscvEmu", Name = "riscv-emu demo", KernelPath = kernelPath, InitrdPath = File.Exists(initrdPath) ? initrdPath : "" };
-            var (vmId, console, mgr) = await BootToShell(vm1, 20000);
+            var (vmId, console, mgr) = await BootToShell(vm1, 100000);
             var reachedShell = console.ToString().Contains(GuestPrompt);
             Console.WriteLine($"Reached '{GuestPrompt}' prompt: {reachedShell}");
             if (reachedShell)
@@ -265,7 +272,7 @@ if (RiscvEmuLocator.LooksLikeRiscvEmuDir(riscvEmuDir))
             """;
             var oldVm = System.Text.Json.JsonSerializer.Deserialize<VmConfig>(oldJson)!;
             Console.WriteLine($"Deserialized old-format VM - DiskPath='{oldVm.DiskPath}' NetworkMode='{oldVm.NetworkMode}' MemoryMB={oldVm.MemoryMB}");
-            var (vmId, console, mgr) = await BootToShell(oldVm, 20000);
+            var (vmId, console, mgr) = await BootToShell(oldVm, 100000);
             Console.WriteLine($"Old-format VM reached '{GuestPrompt}' prompt: {console.ToString().Contains(GuestPrompt)}");
             mgr.ForceStop(oldVm);
             await Task.Delay(300);
@@ -281,7 +288,7 @@ if (RiscvEmuLocator.LooksLikeRiscvEmuDir(riscvEmuDir))
                 KernelPath = kernelPath, InitrdPath = File.Exists(initrdPath) ? initrdPath : "",
                 DiskPath = diskPath3, NetworkMode = "user",
             };
-            var (vmId, console, mgr) = await BootToShell(vm3, 20000);
+            var (vmId, console, mgr) = await BootToShell(vm3, 100000);
             var reachedShell = console.ToString().Contains(GuestPrompt);
             Console.WriteLine($"Reached '{GuestPrompt}' prompt: {reachedShell}");
             if (reachedShell)
@@ -332,7 +339,7 @@ if (RiscvEmuLocator.LooksLikeRiscvEmuDir(riscvEmuDir))
             // same thing the real Shutdown action will do once Phase 4 wires
             // it up.
             var vm5 = new VmConfig { Kind = "RiscvEmu", Name = "selftest-poweroff", KernelPath = kernelPath, InitrdPath = File.Exists(initrdPath) ? initrdPath : "" };
-            var (vmId, console, mgr) = await BootToShell(vm5, 20000);
+            var (vmId, console, mgr) = await BootToShell(vm5, 100000);
             var exited = false;
             mgr.ProcessExited += id => { if (id == vmId) exited = true; };
             if (console.ToString().Contains(GuestPrompt))
@@ -562,13 +569,59 @@ Console.WriteLine("\n--- VmService facade (Core architecture refactor) ---");
         var riscvPreviewLines = riscvPreview.Length == 0 ? 0 : riscvPreview.Split('\n').Length;
         Console.WriteLine($"GetConsolePreview(15) line count: {riscvPreviewLines} (expected: <= 15), is a suffix of the full buffer: {riscvConsole.EndsWith(riscvPreview)}");
 
-        // ShutdownAsync for riscv-emu is still ForceStop under the hood
-        // (see VmService's own remarks) - same real-process-exits proof the
-        // dedicated RiscvEmu engine test earlier already gives ForceStop
-        // directly, now exercised through the facade instead.
-        Console.WriteLine(await service.ShutdownAsync(facadeVmRiscv));
+        // facadeVmRiscv has no InitrdPath - it never reaches an
+        // interactive shell at all, so it can never act on
+        // ShutdownCommand either. Exactly the "guest does not respond"
+        // case ShutdownAsync's own timeout path exists for - a short
+        // custom timeout (not settings's real default) keeps this fast
+        // without changing what the test actually proves. Expect
+        // TimedOut == true and the process still genuinely running
+        // afterward (never auto-force-stopped - see ShutdownAsync's own
+        // remarks for why), then clean up with an explicit ForceStop,
+        // the same as the UI's own Force-Stop-on-timeout offer would.
+        var shortTimeoutSettings = new AppSettings { QemuDir = qemuDir, RiscvEmuDir = riscvEmuDir, RiscvShutdownTimeoutSeconds = 5 };
+        var shutdownResult = await service.ShutdownAsync(facadeVmRiscv, shortTimeoutSettings);
+        Console.WriteLine($"ShutdownAsync (no initrd, never reaches a shell): \"{shutdownResult.Message}\", TimedOut={shutdownResult.TimedOut} (expected: True)");
+        Console.WriteLine($"GetState right after timeout: {service.GetState(facadeVmRiscv)} (expected: Running - NOT auto-force-stopped)");
+        Console.WriteLine(service.ForceStop(facadeVmRiscv));
         await Task.Delay(300);
-        Console.WriteLine($"GetState after ShutdownAsync: {service.GetState(facadeVmRiscv)} (expected: Stopped)");
+        Console.WriteLine($"GetState after the explicit ForceStop cleanup: {service.GetState(facadeVmRiscv)} (expected: Stopped)");
+
+        Console.WriteLine("\n--- ShutdownAsync: a real, responsive guest shuts itself down (process exits on its own, not via kill) ---");
+        // facadeKernelPath/facadeInitrdPath, not the earlier kernelPath/
+        // initrdPath - those are scoped to the earlier "RiscvEmu engine"
+        // block above and not visible down here, same reasoning the
+        // existing facadeKernelPath (above) already follows.
+        var facadeInitrdPath = Path.Combine(riscvEmuDir, "boot", "initramfs.cpio.gz");
+        if (File.Exists(facadeInitrdPath))
+        {
+            var shutdownVm = new VmConfig { Kind = "RiscvEmu", Name = "selftest-graceful-shutdown", KernelPath = facadeKernelPath, InitrdPath = facadeInitrdPath };
+            Console.WriteLine(await service.StartAsync(shutdownVm, settings));
+            // The Buildroot-built image's own boot-time DHCP wait (see
+            // guest-markers.sh's own remarks) can take close to a minute
+            // before the shell becomes interactive - 90s is generous
+            // margin, not a tight bound.
+            var deadline = DateTime.UtcNow.AddSeconds(90);
+            while (DateTime.UtcNow < deadline && !service.GetConsoleBuffer(shutdownVm.Id).Contains(GuestPrompt))
+                await Task.Delay(500);
+            var reachedShell = service.GetConsoleBuffer(shutdownVm.Id).Contains(GuestPrompt);
+            Console.WriteLine($"Reached '{GuestPrompt}' prompt: {reachedShell}");
+            if (reachedShell)
+            {
+                var graceful = await service.ShutdownAsync(shutdownVm, settings);
+                Console.WriteLine($"ShutdownAsync (\"{shutdownVm.ShutdownCommand}\"): \"{graceful.Message}\", TimedOut={graceful.TimedOut} (expected: False)");
+                Console.WriteLine($"GetState after a successful graceful shutdown: {service.GetState(shutdownVm)} (expected: Stopped - the guest exited on its own, nothing force-stopped it)");
+            }
+            else
+            {
+                Console.WriteLine("Never reached a shell within 90s - cannot test graceful shutdown. Forcing stop.");
+                Console.WriteLine(service.ForceStop(shutdownVm));
+            }
+        }
+        else
+        {
+            Console.WriteLine($"No initramfs found at '{facadeInitrdPath}' - skipping the real graceful-shutdown test.");
+        }
     }
     else
     {

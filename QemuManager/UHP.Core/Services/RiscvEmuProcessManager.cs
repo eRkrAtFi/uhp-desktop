@@ -8,7 +8,7 @@ using QemuManager.Models;
 
 namespace QemuManager.Services;
 
-public enum RiscvEmuRunState { Stopped, Running }
+public enum RiscvEmuRunState { Stopped, Running, Stopping }
 
 /// <summary>One "riscv-emu: stats insns=... secs=... mips=... pc=..." sample
 /// - see src/main.c's periodic report. Pc is kept as the raw hex text (a
@@ -30,9 +30,11 @@ public class RunningRiscvEmu
 /// Turns a <see cref="VmConfig"/> of kind RiscvEmu into a riscv-emu.exe
 /// process. Unlike real QEMU there is no QMP control channel and no guest
 /// ACPI power button to ask for a graceful shutdown - the guest's own
-/// console output is the only signal this app gets, and the only way to
-/// stop it (short of the guest halting itself via the test-finisher device,
-/// which simply ends the process) is to terminate it.
+/// console is the only channel, so a graceful stop here means typing
+/// VmConfig.ShutdownCommand at it and waiting for the guest to act on it
+/// (see ShutdownGracefullyAsync). ForceStop remains the only *immediate*
+/// way to stop one, for when a graceful wait is not what is wanted or
+/// has already timed out.
 /// </summary>
 public class RiscvEmuProcessManager : IConsoleSource
 {
@@ -60,7 +62,11 @@ public class RiscvEmuProcessManager : IConsoleSource
     public RiscvEmuRunState GetState(string vmId) =>
         _running.TryGetValue(vmId, out var r) ? r.State : RiscvEmuRunState.Stopped;
 
-    public bool IsRunning(string vmId) => GetState(vmId) == RiscvEmuRunState.Running;
+    /// <summary>True for Running AND Stopping - the process is genuinely
+    /// still alive during a graceful-shutdown wait (see
+    /// ShutdownGracefullyAsync), same convention VmProcessManager's own
+    /// IsRunning already uses for VmRunState.Stopping.</summary>
+    public bool IsRunning(string vmId) => GetState(vmId) is RiscvEmuRunState.Running or RiscvEmuRunState.Stopping;
 
     public string Start(VmConfig vm, string riscvEmuDir)
     {
@@ -184,9 +190,65 @@ public class RiscvEmuProcessManager : IConsoleSource
         catch { return null; }
     }
 
-    /// <summary>Immediately ends the riscv-emu.exe process. There is no
-    /// guest-side shutdown protocol to ask for first (see class remarks) -
-    /// this is the only way to stop a VM short of it halting itself.</summary>
+    /// <summary>Types VmConfig.ShutdownCommand at the guest's own console
+    /// and waits (up to <paramref name="timeout"/>) for the real
+    /// riscv-emu.exe process to exit on its own in response - a real
+    /// shutdown, not a kill. Does NOT force-stop anything itself, on
+    /// success or on timeout: a VM that does not respond within the
+    /// timeout is reported back as TimedOut=true and left exactly as it
+    /// was (still Running) for the caller to decide what to do (the UI
+    /// offers Force Stop as a separate, explicit action - see
+    /// MainWindow.StopButton_Click). Auto-force-stopping here would risk
+    /// corrupting a filesystem on an attached disk the guest had not
+    /// actually finished unmounting - the entire reason this method, and
+    /// not ForceStop, exists for a Shut Down click in the first place.
+    ///
+    /// State is Stopping for the duration of the wait (mirrors
+    /// VmProcessManager.StopGracefullyAsync's own VmRunState.Stopping for
+    /// QEMU) - IsRunning stays true throughout, so Force Stop (and
+    /// anything else gated on "is this VM running") keeps working
+    /// normally while this is in progress.</summary>
+    public async Task<ShutdownResult> ShutdownGracefullyAsync(VmConfig vm, TimeSpan timeout)
+    {
+        if (!_running.TryGetValue(vm.Id, out var running) || running.Process.HasExited)
+            return new ShutdownResult("Not running.", false);
+
+        running.State = RiscvEmuRunState.Stopping;
+        StateChanged?.Invoke();
+
+        SendInput(vm.Id, Encoding.UTF8.GetBytes(vm.ShutdownCommand + "\n"));
+
+        try
+        {
+            using var cts = new System.Threading.CancellationTokenSource(timeout);
+            // OnProcessExited (wired to Process.Exited in Start()) still
+            // fires normally and does the real state/_running cleanup;
+            // this just waits for that to happen and reports success.
+            await running.Process.WaitForExitAsync(cts.Token);
+            return new ShutdownResult("Guest shut down.", false);
+        }
+        catch (OperationCanceledException)
+        {
+            // Still running - revert Stopping back to Running (not
+            // Stopped: nothing died) rather than leaving a transient
+            // label stuck forever. Guarded on `current == running` the
+            // same way VmProcessManager.RevertStoppingIfStillRunningAsync
+            // is, in case this VM was somehow stopped and started again
+            // during the wait.
+            if (_running.TryGetValue(vm.Id, out var current) && current == running && current.State == RiscvEmuRunState.Stopping)
+            {
+                current.State = RiscvEmuRunState.Running;
+                StateChanged?.Invoke();
+            }
+            return new ShutdownResult($"Guest did not shut down within {timeout.TotalSeconds:0}s of \"{vm.ShutdownCommand}\".", true);
+        }
+    }
+
+    /// <summary>Immediately kills the riscv-emu.exe process - no console
+    /// command, no wait. For a graceful stop that gives the guest a real
+    /// chance to shut down on its own first, see ShutdownGracefullyAsync;
+    /// this is what that offers as a fallback once its own wait times
+    /// out, and what it stays otherwise unless explicitly called.</summary>
     public string ForceStop(VmConfig vm)
     {
         if (!_running.TryGetValue(vm.Id, out var running)) return "Not running.";

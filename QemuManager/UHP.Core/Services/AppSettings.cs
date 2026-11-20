@@ -20,6 +20,17 @@ public class AppSettings
     /// i.e. the riscv-emu project's own root folder.</summary>
     public string RiscvEmuDir { get; set; } = DefaultRiscvEmuDir();
 
+    /// <summary>How long VmService.ShutdownAsync waits, after sending a
+    /// riscv-emu VM's own VmConfig.ShutdownCommand to its console, for the
+    /// guest to actually power itself off before giving up and reporting a
+    /// timeout - see VmService.ShutdownAsync's own remarks for why this
+    /// never auto-escalates to Force Stop on its own. 60s is generous for
+    /// a guest that is genuinely going to shut down (the Buildroot-built
+    /// image this project ships with does, in well under that), while
+    /// still being a bounded wait rather than an indefinite one for a
+    /// guest that is not going to respond at all.</summary>
+    public int RiscvShutdownTimeoutSeconds { get; set; } = 60;
+
     /// <summary>A "qemu" folder bundled next to the .exe (see
     /// package-portable.ps1) wins, then anywhere qemu-system-*.exe is
     /// already reachable via PATH (the installer's own "add to PATH"

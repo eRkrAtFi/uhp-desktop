@@ -93,31 +93,21 @@ public class VmConfig
     /// app still falls back to Force Stop after a timeout regardless of
     /// what this is set to.
     ///
-    /// Defaults to "sync; poweroff -f" because that is what this app's own
-    /// bundled busybox-initramfs test image actually needs: plain
-    /// "poweroff" is a confirmed no-op there - busybox's poweroff applet
-    /// signals init (PID 1) to run the shutdown, and this image's init
-    /// never acts on that signal, identically under riscv-emu and real
-    /// qemu-system-riscv64 (same SigBlk/SigCgt masks, same nothing-happens
-    /// result on both) - so only "-f" (bypass init, call reboot() directly)
-    /// actually powers the guest off; "sync" first flushes whatever "-f"
-    /// would otherwise skip. A guest with a real init system (e.g. Alpine
-    /// installed on a disk image) should have this changed to a plain
-    /// "poweroff" instead, so services actually stop and filesystems
-    /// unmount before power-off.
-    ///
-    /// PENDING (not yet done - do this once the Buildroot-built image
-    /// replaces the current undocumented-provenance one, after boot/
-    /// shutdown are verified against the real image, not before): the
-    /// new image's busybox init (board/riscv-emu/rootfs-overlay/etc/
-    /// inittab) does act on a plain SIGUSR2/poweroff signal, and its
-    /// kernel fragment enables CONFIG_POWER_RESET_SYSCON_POWEROFF - the
-    /// "-f" workaround this default exists for is specific to the OLD
-    /// image's own init and should not carry over. Change this default
-    /// to plain "poweroff" at that point, together with the
-    /// GUEST_PROMPT/GUEST_BANNER updates in riscv-emu/boot/
-    /// guest-markers.sh and QemuManager.SelfTest/Program.cs.</summary>
-    public string ShutdownCommand { get; set; } = "sync; poweroff -f";
+    /// Plain "poweroff" - verified directly against the Buildroot-built
+    /// image (Linux 6.18.64) that replaced this project's own earlier
+    /// undocumented-provenance one: its real busybox init (board/riscv-
+    /// emu/rootfs-overlay/etc/inittab) does act on a plain poweroff, and
+    /// its kernel fragment's CONFIG_POWER_RESET_SYSCON_POWEROFF carries
+    /// the request the rest of the way, under both riscv-emu and real
+    /// qemu-system-riscv64 identically (fs_compare.sh's own poweroff step,
+    /// and this app's own Shut Down button, both confirmed). The OLD
+    /// image's init never acted on a plain poweroff signal at all (needed
+    /// "sync; poweroff -f" to bypass init and call reboot() directly) -
+    /// that workaround does not apply here and should not come back if a
+    /// future guest image's own init turns out to need it again; verify
+    /// against the real image first, the way this one was, rather than
+    /// changing this default on the strength of a guess.</summary>
+    public string ShutdownCommand { get; set; } = "poweroff";
 
     public DateTime CreatedUtc { get; set; } = DateTime.UtcNow;
 }

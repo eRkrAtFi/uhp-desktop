@@ -243,7 +243,12 @@ public class VmService : IVmService, IDisposable
 
     public VmState GetState(VmConfig vm)
     {
-        if (IsRiscv(vm)) return _riscv.IsRunning(vm.Id) ? VmState.Running : VmState.Stopped;
+        if (IsRiscv(vm)) return _riscv.GetState(vm.Id) switch
+        {
+            RiscvEmuRunState.Running => VmState.Running,
+            RiscvEmuRunState.Stopping => VmState.Stopping,
+            _ => VmState.Stopped,
+        };
         return _qemu.GetState(vm.Id) switch
         {
             VmRunState.Starting => VmState.Starting,
@@ -347,10 +352,18 @@ public class VmService : IVmService, IDisposable
         finally { EndAction(vm.Id); }
     }
 
-    public async Task<string> ShutdownAsync(VmConfig vm)
+    public async Task<ShutdownResult> ShutdownAsync(VmConfig vm, AppSettings settings)
     {
-        if (!TryBeginAction(vm.Id)) return "Another action is already in progress for this VM.";
-        try { return IsRiscv(vm) ? _riscv.ForceStop(vm) : await _qemu.StopGracefullyAsync(vm); }
+        if (!TryBeginAction(vm.Id)) return new ShutdownResult("Another action is already in progress for this VM.", false);
+        try
+        {
+            if (IsRiscv(vm))
+            {
+                var timeout = TimeSpan.FromSeconds(Math.Max(1, settings.RiscvShutdownTimeoutSeconds));
+                return await _riscv.ShutdownGracefullyAsync(vm, timeout);
+            }
+            return new ShutdownResult(await _qemu.StopGracefullyAsync(vm), false);
+        }
         finally { EndAction(vm.Id); }
     }
 

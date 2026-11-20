@@ -280,11 +280,30 @@ public partial class MainWindow : Window
         var item = SelectedItem;
         if (item == null) return;
 
-        var shutdownTask = _vmService.ShutdownAsync(item.Config);
+        var shutdownTask = _vmService.ShutdownAsync(item.Config, _settings);
         RefreshToolbarState(); // see StartButton_Click's own remarks
-        var message = await shutdownTask;
-        SetStatus($"{item.Config.Name}: {message}");
+        var result = await shutdownTask;
+        SetStatus($"{item.Config.Name}: {result.Message}");
         RefreshRunStates();
+
+        // Point 3: a timed-out graceful shutdown offers Force Stop - it
+        // never happens on its own. Only riscv-emu's own leg can set
+        // TimedOut (see ShutdownAsync's own remarks), and only while the
+        // VM the user is looking at is still the same one this result is
+        // actually about - SelectedItem could have changed during the
+        // (up to RiscvShutdownTimeoutSeconds-long) wait.
+        if (result.TimedOut && SelectedItem == item)
+        {
+            var offerForceStop = MessageBox.Show(this,
+                $"'{item.Config.Name}' did not shut down within the configured timeout.\n\nForce-terminate it now? This is equivalent to pulling the power cord.",
+                "Shut Down timed out", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+            if (offerForceStop == MessageBoxResult.Yes)
+            {
+                var forceMessage = _vmService.ForceStop(item.Config);
+                SetStatus($"{item.Config.Name}: {forceMessage}");
+                RefreshRunStates();
+            }
+        }
     }
 
     private void ForceStopButton_Click(object sender, RoutedEventArgs e)
@@ -352,11 +371,12 @@ public partial class MainWindow : Window
 
     private void SettingsButton_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new SettingsWindow(_settings.QemuDir, _settings.RiscvEmuDir) { Owner = this };
+        var dialog = new SettingsWindow(_settings.QemuDir, _settings.RiscvEmuDir, _settings.RiscvShutdownTimeoutSeconds) { Owner = this };
         if (dialog.ShowDialog() == true)
         {
             _settings.QemuDir = dialog.QemuDir;
             _settings.RiscvEmuDir = dialog.RiscvEmuDir;
+            _settings.RiscvShutdownTimeoutSeconds = dialog.RiscvShutdownTimeoutSeconds;
             _settings.Save();
             CheckEngineDirs();
         }
