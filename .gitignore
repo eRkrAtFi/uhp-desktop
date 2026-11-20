@@ -72,3 +72,10 @@ logs/
 # referenced by any test, script, or Makefile target.
 /riscv-emu/*.log
 /riscv-emu/live_chunk*.bin
+
+# fs_compare.sh's own raw transcripts from its last run (both legs,
+# whether it passed or failed) - copied here from its real mktemp -d
+# workdir specifically so CI can upload a fixed, known path as an
+# artifact when it fails; see fs_compare.sh's own comment at the copy
+# site.
+/riscv-emu/boot/fs_compare_last_run/

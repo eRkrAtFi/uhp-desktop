@@ -348,6 +348,20 @@ if [ $i -ge 150 ]; then
 fi
 echo "fs_compare: qemu-system-riscv64 exited cleanly after poweroff"
 
+# Copied to a fixed, known path (gitignored) right after both legs
+# finish producing output, unconditionally - not just in a FAIL branch.
+# $WORKDIR itself is a fresh mktemp -d every run, so without this a CI
+# failure's own raw transcripts are gone the moment the job's runner is
+# torn down, leaving only whatever this script's own FAIL messages
+# happened to `tail -n 20` into the log - not enough to diagnose a
+# timing-sensitive mismatch that only reproduces on a slower/different
+# machine than whoever is reading the log used locally.
+LAST_RUN_DIR="$(dirname "$0")/fs_compare_last_run"
+rm -rf "$LAST_RUN_DIR" 2>/dev/null
+mkdir -p "$LAST_RUN_DIR"
+cp "$RISCV_OUT" "$LAST_RUN_DIR/riscv-emu.out"
+cp "$QEMU_OUT" "$LAST_RUN_DIR/qemu.out"
+
 # Confirms the $?-escaping fix (see this script's own top comment) is
 # actually working, on both sides independently, before trusting
 # anything else about this run - a transcript diff alone cannot catch

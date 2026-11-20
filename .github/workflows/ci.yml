@@ -95,6 +95,19 @@ jobs:
           fi
         shell: bash
 
+      # fs_compare.sh copies both legs' own raw transcripts to this fixed
+      # path on every run (see its own comment at the copy site) - without
+      # this, a CI-only failure's evidence disappears the moment the
+      # runner is torn down, leaving only whatever a FAIL message's own
+      # `tail -n 20` happened to catch.
+      - name: Upload fs_compare raw transcripts (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fs_compare_last_run
+          path: riscv-emu/boot/fs_compare_last_run/
+          if-no-files-found: ignore
+
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "8.0.x"
