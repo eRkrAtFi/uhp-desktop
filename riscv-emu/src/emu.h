@@ -303,8 +303,25 @@ typedef struct {
 #define STDIN_RING_SIZE 256
 typedef struct {
     uint8_t buf[STDIN_RING_SIZE];
-    volatile unsigned int write_pos;
-    volatile unsigned int read_pos;
+    /* Plain unsigned int, not volatile - every access goes through
+     * __atomic_load_n/__atomic_store_n with explicit acquire/release
+     * ordering (see main.c's stdin_reader_thread/console_input_ready/
+     * console_getchar), which is what actually guarantees the producer
+     * thread's write to buf[] is visible to the interpreter before it
+     * ever observes the updated write_pos, and symmetrically that the
+     * interpreter's read of buf[] is visible to the producer before it
+     * reuses that slot. `volatile` alone (the previous declaration here)
+     * only stops a single thread's own compiler from caching/reordering
+     * its own accesses to the variable - it says nothing about
+     * cross-thread memory visibility or ordering, which is the actual
+     * correctness requirement for a producer/consumer ring buffer and
+     * was never actually guaranteed before. GCC/Clang built-ins, not
+     * <stdatomic.h>'s _Atomic/atomic_* - this project builds as C99 (see
+     * Makefile's CFLAGS), which predates <stdatomic.h>; the built-ins
+     * provide the identical operations and are available regardless of
+     * -std=. */
+    unsigned int write_pos;
+    unsigned int read_pos;
 } StdinRing;
 
 typedef struct {

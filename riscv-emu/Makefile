@@ -193,6 +193,15 @@ interactive-test: $(BIN)
 fs-compare: $(BIN)
 	bash boot/fs_compare.sh
 
+# Confirms riscv-emu's own UART absorbs one single, unpaced 4096-byte
+# write with no byte loss - see boot/burst_test.sh's own top comment for
+# why this exists (real qemu-system-riscv64 was confirmed, via
+# fs_compare.sh's own CI failures, to lose input bytes under exactly
+# this kind of unpaced delivery; riscv-emu's own leg of that same script
+# never has, across every run - this is the dedicated test of that).
+burst-test: $(BIN)
+	bash boot/burst_test.sh
+
 # Everything that does not need multiple minutes of real wall-clock time
 # for a full Linux boot - the fast, "does the last change still work"
 # suite. boot-test/interactive-test/fs-compare are deliberately not part
@@ -205,4 +214,4 @@ clean:
 
 .PHONY: all test compare trace clean firmware virtio-test virtio-compare \
         integration integration-compare boot-test interactive-test \
-        fs-compare test-all
+        fs-compare burst-test test-all

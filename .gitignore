@@ -79,3 +79,4 @@ logs/
 # artifact when it fails; see fs_compare.sh's own comment at the copy
 # site.
 /riscv-emu/boot/fs_compare_last_run/
+/riscv-emu/boot/burst_test_last_run/

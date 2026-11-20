@@ -139,73 +139,10 @@ export PATH="../tools/w64devkit/bin:/c/Program Files/LLVM/bin:/c/Program Files/q
 # entirely for this script.
 export MSYS2_ARG_CONV_EXCL="*"
 
-# See this script's own top comment on process identification. Echoes
-# nothing if the process is already gone or /proc/*/winpid is unavailable
-# for some other reason - every call site treats an empty result as
-# "nothing to kill", not an error.
-win_pid() {
-    cat "/proc/$1/winpid" 2>/dev/null
-}
-
-# Shared by both legs. Counts how many times $GUEST_PROMPT has appeared
-# in a transcript so far, \r-stripped first - confirmed directly (a real
-# CI run's own raw output, inspected byte-for-byte) that this guest's own
-# tty really does emit \r\n, not just \n, same as any ordinary
-# interactive Linux tty with its default ONLCR output translation. Some
-# grep builds appear to tolerate this silently (a real CI run's own
-# FALSE_RC=1 check, further down, passed despite it) and some might not -
-# not something to depend on either way, since it was never deliberately
-# verified to hold rather than merely observed once.
-prompt_count() {
-    tr -d '\r' < "$1" 2>/dev/null | grep -cF "$GUEST_PROMPT"
-}
-
-# Sends $3 to fd $2, then waits for a REAL fresh prompt to appear in $1,
-# not the existing one $cmd's own echo lands on - the shell prints its
-# prompt ONCE, with nothing after it until something is typed, and
-# whatever is typed is echoed by the tty onto that SAME line (exactly
-# like a real terminal: "$ " then typing "ls" shows "$ ls" on one line,
-# not a second "$" of its own) - so sending one command produces exactly
-# ONE new occurrence of GUEST_PROMPT (the next idle prompt, once the
-# command's own output is done), not two (confirmed directly: an
-# earlier version of this waited for +2 and never once saw it, since the
-# count genuinely only ever grows by 1 per command). $4 (default 40s) is
-# a timeout safety net, $5 a short label for diagnostics (e.g.
-# "riscv-emu"/"QEMU").
-#
-# Replaces this script's own earlier fixed-sleep pacing for both legs -
-# confirmed directly (a real CI run on GitHub Actions' own Windows
-# runners, never reproduced locally before or after on the same machine)
-# that a fixed per-command sleep was too tight there: one command's own
-# `printf` landed while an async kernel printk (ext2's own "filesystem
-# being mounted at ..." notice, which fires from a different kernel
-# context than the shell's synchronous tty echo) was hitting the same
-# console at the same real moment, and real input characters were lost
-# in transit, not just garbled in the visible transcript - the
-# corresponding RC= line was missing entirely afterward, not merely
-# wrong. A real 16550 UART modeled accurately enough to lose characters
-# under genuine RX/TX contention is a plausible, real explanation for why
-# riscv-emu's own simpler UART apparently never reproduces this - but
-# both legs are moved to this same wait-for-a-real-prompt pacing, not
-# just QEMU's, since a fixed sleep on the riscv-emu side is exactly the
-# same kind of guess about "probably long enough" on a host whose real
-# timing cannot be controlled from here.
-send_and_wait() {
-    local out_file="$1" fd="$2" cmd="$3" timeout="${4:-40}" label="$5" before tries
-    before=$(prompt_count "$out_file")
-    printf '%s\n' "$cmd" >&"$fd"
-    tries=0
-    while [ "$(prompt_count "$out_file")" -lt "$((before + 1))" ]; do
-        tries=$((tries + 1))
-        if [ "$tries" -ge "$timeout" ]; then
-            echo "fs_compare: FAIL - $label did not respond within ${timeout}s to: $cmd" >&2
-            echo "fs_compare: last output:" >&2
-            tail -n 20 "$out_file" >&2
-            return 1
-        fi
-        sleep 1
-    done
-}
+# win_pid/prompt_count/type_slowly/send_and_wait: shared with
+# burst_test.sh, see guest_io.sh's own comments.
+# shellcheck source=guest_io.sh
+. "$(dirname "$0")/guest_io.sh"
 
 WORKDIR=$(mktemp -d)
 RISCV_OUT="$WORKDIR/riscv-emu.out"
@@ -379,13 +316,13 @@ qemu_producer() {
         fi
         sleep 1
     done
-    send_and_wait "$QEMU_OUT" 1 'mkfs.ext2 -F /dev/vda 2>&1' 40 "QEMU" || return 1
-    send_and_wait "$QEMU_OUT" 1 'mkdir -p /mnt/disk' 40 "QEMU" || return 1
-    send_and_wait "$QEMU_OUT" 1 'mount -t ext2 /dev/vda /mnt/disk 2>&1; echo MOUNT_RC=$?' 40 "QEMU" || return 1
-    send_and_wait "$QEMU_OUT" 1 'false; echo FALSE_RC=$?' 40 "QEMU" || return 1
-    send_and_wait "$QEMU_OUT" 1 'echo "hello from ext2 on virtio-blk" > /mnt/disk/testfile.txt; sync; md5sum /mnt/disk/testfile.txt; cat /mnt/disk/testfile.txt' 40 "QEMU" || return 1
-    send_and_wait "$QEMU_OUT" 1 'umount /mnt/disk; echo UMOUNT_RC=$?' 40 "QEMU" || return 1
-    printf 'poweroff\n'
+    send_and_wait "$QEMU_OUT" 1 'mkfs.ext2 -F /dev/vda 2>&1' 40 "QEMU" 1 || return 1
+    send_and_wait "$QEMU_OUT" 1 'mkdir -p /mnt/disk' 40 "QEMU" 1 || return 1
+    send_and_wait "$QEMU_OUT" 1 'mount -t ext2 /dev/vda /mnt/disk 2>&1; echo MOUNT_RC=$?' 40 "QEMU" 1 || return 1
+    send_and_wait "$QEMU_OUT" 1 'false; echo FALSE_RC=$?' 40 "QEMU" 1 || return 1
+    send_and_wait "$QEMU_OUT" 1 'echo "hello from ext2 on virtio-blk" > /mnt/disk/testfile.txt; sync; md5sum /mnt/disk/testfile.txt; cat /mnt/disk/testfile.txt' 40 "QEMU" 1 || return 1
+    send_and_wait "$QEMU_OUT" 1 'umount /mnt/disk; echo UMOUNT_RC=$?' 40 "QEMU" 1 || return 1
+    type_slowly 1 'poweroff'
 }
 
 # Point 1 of the fix: -no-reboot makes qemu-system-riscv64 exit on its

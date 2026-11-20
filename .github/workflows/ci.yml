@@ -89,6 +89,7 @@ jobs:
           if [ -f boot/KernelImage ] && [ -f boot/initramfs.cpio.gz ]; then
             make boot-test
             make interactive-test
+            make burst-test
             make fs-compare
           else
             echo "::warning::Skipping boot-test/interactive-test/fs-compare - boot/KernelImage and boot/initramfs.cpio.gz are not available. Expected if the Fetch guest images step above did not run (e.g. a local invocation of just this Makefile target); it already fails this job loudly if it was expected to fetch them and could not."

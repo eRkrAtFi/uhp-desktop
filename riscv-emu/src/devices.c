@@ -178,12 +178,23 @@ void clint_write(Machine *m, uint64_t addr, int width, uint64_t val)
  * THRE (once its buffer emptied) depended on precise instruction timing -
  * a real non-determinism, but in when buffered TX got serviced, not in the
  * stdin ring buffer that earlier investigation (see README) suspected. */
+#define UART_IER_RDI 0x01
 #define UART_IER_THRI 0x02
 static int plic_irq_live(Machine *m, int irq)
 {
     CPU *c = &m->cpu;
+    /* RX half gated on IER.RDI (bit 0) && LSR.DR, matching a real 16550
+     * - previously ungated (console_input_ready(m) alone), which read as
+     * "RX IRQ live" even with RDI disabled. Harmless in practice so far
+     * (the guest's own serial8250 driver sets RDI whenever it has the
+     * port open wanting input, the same assumption the THRE half next to
+     * it already relies on), but still the wrong condition to report,
+     * and now that StdinRing never drops/overwrites an unread byte (see
+     * its own comment in emu.h/main.c), lingering RX-ready data the
+     * guest has deliberately masked off is exactly the kind of state
+     * this needs to not misreport as a pending interrupt. */
     if (irq == UART_IRQ)
-        return console_input_ready(m) || (c->uart_ier & UART_IER_THRI);
+        return ((c->uart_ier & UART_IER_RDI) && console_input_ready(m)) || (c->uart_ier & UART_IER_THRI);
     if (irq == VIRTIO_IRQ) return c->virtio_isr != 0;
     if (irq == VIRTIO_NET_IRQ) return c->net_isr != 0;
     return 0;

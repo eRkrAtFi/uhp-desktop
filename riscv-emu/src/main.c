@@ -40,14 +40,41 @@ static unsigned long WINAPI stdin_reader_thread(void *arg)
         int n = _read(_fileno(stdin), &ch, 1);
         if (n <= 0) break; /* EOF or error: stdin is closed, nothing more to feed */
         StdinRing *ring = &m->stdin_ring;
-        unsigned int w = ring->write_pos, r = ring->read_pos;
-        if (w - r < STDIN_RING_SIZE) { /* drop the byte if the guest never drains it */
-            ring->buf[w % STDIN_RING_SIZE] = ch;
-            ring->write_pos = w + 1;
-            if (getenv("RISCV_EMU_SBIDBG"))
-                fprintf(stderr, "[stdin-thread] pushed %d ('%c') (ring r=%u w=%u->%u)\n",
-                        (int)ch, (ch >= 32 && ch < 127) ? ch : '?', r, w, w + 1);
+        /* write_pos: only this thread ever writes it, so reading back
+         * its own last value needs no cross-thread ordering (RELAXED). */
+        unsigned int w = __atomic_load_n(&ring->write_pos, __ATOMIC_RELAXED);
+        unsigned int r;
+        /* Wait for room rather than drop (or overwrite an unread byte)
+         * if the guest hasn't drained the ring yet - confirmed directly
+         * (boot/burst_test.sh) that dropping here silently lost bytes
+         * under a single large (~4KB) burst with no host-side pacing,
+         * which real hardware (or this ring, sized generously enough
+         * that normal interactive use never fills it) never would. This
+         * is a background OS thread with nothing else to do, so spinning
+         * briefly here costs nothing the interpreter would otherwise be
+         * doing; the actual backpressure this creates on whatever is
+         * writing to this process's stdin (a host-side pipe write
+         * blocking once its own OS buffer fills) is the same cooperative
+         * slowdown a real UART's own flow control would produce.
+         * ACQUIRE: must see the interpreter's own read of buf[r%SIZE]
+         * (ordered before its read_pos release store, below) as
+         * happening-before this thread reuses that same slot - otherwise
+         * nothing stops this thread from overwriting a byte the
+         * interpreter has not actually finished reading yet. */
+        for (;;) {
+            r = __atomic_load_n(&ring->read_pos, __ATOMIC_ACQUIRE);
+            if (w - r < STDIN_RING_SIZE) break;
+            Sleep(1);
         }
+        ring->buf[w % STDIN_RING_SIZE] = ch;
+        /* RELEASE: publishes both this buf[] write and the new write_pos
+         * together - the interpreter's own ACQUIRE load of write_pos
+         * (console_input_ready/console_getchar) is what makes that
+         * ordering guarantee meaningful on its side. */
+        __atomic_store_n(&ring->write_pos, w + 1, __ATOMIC_RELEASE);
+        if (getenv("RISCV_EMU_SBIDBG"))
+            fprintf(stderr, "[stdin-thread] pushed %d ('%c') (ring r=%u w=%u->%u)\n",
+                    (int)ch, (ch >= 32 && ch < 127) ? ch : '?', r, w, w + 1);
     }
     return 0;
 }
@@ -64,15 +91,26 @@ void console_input_start(Machine *m) { (void)m; }
 int console_input_ready(Machine *m)
 {
     StdinRing *ring = &m->stdin_ring;
-    return ring->read_pos != ring->write_pos;
+    /* ACQUIRE on write_pos: must see the producer thread's own write to
+     * buf[] (ordered before its write_pos release store) before this
+     * ever reports a byte as ready - read_pos needs no such ordering,
+     * only this thread (the interpreter) ever writes it. */
+    unsigned int w = __atomic_load_n(&ring->write_pos, __ATOMIC_ACQUIRE);
+    unsigned int r = __atomic_load_n(&ring->read_pos, __ATOMIC_RELAXED);
+    return r != w;
 }
 
 int console_getchar(Machine *m)
 {
     StdinRing *ring = &m->stdin_ring;
-    if (ring->read_pos == ring->write_pos) return -1;
-    unsigned char ch = ring->buf[ring->read_pos % STDIN_RING_SIZE];
-    ring->read_pos++;
+    unsigned int w = __atomic_load_n(&ring->write_pos, __ATOMIC_ACQUIRE);
+    unsigned int r = __atomic_load_n(&ring->read_pos, __ATOMIC_RELAXED);
+    if (r == w) return -1;
+    unsigned char ch = ring->buf[r % STDIN_RING_SIZE];
+    /* RELEASE: publishes that this slot has now been read, so the
+     * producer thread's own ACQUIRE load of read_pos is guaranteed to
+     * see it before reusing the slot. */
+    __atomic_store_n(&ring->read_pos, r + 1, __ATOMIC_RELEASE);
     return ch;
 }
 
