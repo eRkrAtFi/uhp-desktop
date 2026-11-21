@@ -1,5 +1,10 @@
 # UHP Desktop + riscv-emu
 
+> **Experimental, work in progress.** Built as a learning/reverse-
+> engineering project, not a production hypervisor - see [Status](#status)
+> below for what works and what doesn't yet, and
+> [Reporting bugs](#reporting-bugs) if something breaks.
+
 A Windows desktop VM manager (**UHP Desktop**, .NET 8/WPF) paired with a
 hand-written RISC-V system emulator (**riscv-emu**) built from scratch in
 C and verified at every step against real QEMU.
@@ -15,6 +20,28 @@ C and verified at every step against real QEMU.
   build log and every bug found along the way.
 
 ![UHP Desktop's main window, with one VM running](docs/screenshot.png)
+
+## Status
+
+**Works:** creating/running/stopping both real QEMU VMs and riscv-emu
+VMs; the riscv-emu console (typing, Ctrl+C, a real graceful Shut Down
+that waits for the guest to exit on its own); live CPU/memory stats;
+Recent Tasks; a portable, no-installer release build.
+
+**Does not work yet:**
+- The console window shows ANSI/VT100 escape sequences literally
+  (colors, cursor movement) instead of interpreting them - plain text
+  only for now.
+- The **Storage** and **Networking** sections in the sidebar are
+  placeholders with no functionality behind them yet (per-VM disk/
+  network settings, in the VM's own Edit dialog, already work - these
+  are for anything beyond that, e.g. a storage-pool or bridged-network
+  view).
+
+See [`QemuManager/ARCHITECTURE_AUDIT.md`](QemuManager/ARCHITECTURE_AUDIT.md)
+for the full, honest list of known gaps and risks (storage/networking
+depth, security posture, multi-node readiness) and what's actually
+planned next.
 
 ## Requirements
 
@@ -53,12 +80,13 @@ from-scratch, fully reproducible Buildroot build (Linux 6.18.64 - see
 is verified) from this repo's own
 [`guest-images-v1`](../../releases/tag/guest-images-v1) release, then
 point a new riscv-emu VM at the `boot/KernelImage` and
-`boot/initramfs.cpio.gz` it extracts. That fetch needs the
-[GitHub CLI](https://cli.github.com/) (`gh`), signed in - this repo is
-private, so a release asset is not a plain anonymous download; the
-script's own error message says so if `gh` is missing or not
-authenticated. (Real QEMU VMs need neither - point UHP Desktop at an
-existing disk image/ISO the same way any QEMU front end would.)
+`boot/initramfs.cpio.gz` it extracts. The fetch itself needs nothing
+extra - a plain HTTPS download, same as any other release asset; the
+[GitHub CLI](https://cli.github.com/) (`gh`) is only used as a fallback
+if that download fails for some reason (a proxy/firewall blocking
+github.com's own release-asset host, for instance). (Real QEMU VMs need
+neither - point UHP Desktop at an existing disk image/ISO the same way
+any QEMU front end would.)
 
 ## Quick start - building it
 
@@ -84,6 +112,13 @@ See [`riscv-emu/README.md`](riscv-emu/README.md) and
 architecture, every bug found and fixed, and why each design decision was
 made. [`QemuManager/ARCHITECTURE_AUDIT.md`](QemuManager/ARCHITECTURE_AUDIT.md)
 tracks known risks and planned work.
+
+## Reporting bugs
+
+Open an [issue](../../issues/new?template=bug_report.md) - there's a
+template that asks for the version/commit, Windows version, and (if
+UHP Desktop crashed or misbehaved) the matching file from its own
+`logs` folder, which is usually what actually explains what happened.
 
 ## License
 

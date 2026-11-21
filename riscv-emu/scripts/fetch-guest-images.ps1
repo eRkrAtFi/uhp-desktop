@@ -1,9 +1,8 @@
 # Downloads third-party guest images this project needs but never commits
 # to git - see fetch-guest-images.sh's own top comment for the full
 # reasoning (GPL licensing for the kernel/initramfs, plain size for
-# Alpine's minirootfs, and why the kernel/initramfs are not fetched here
-# yet at all). This is the same script, for a plain PowerShell/Windows
-# run with no sh/curl required.
+# Alpine's minirootfs). This is the same script, for a plain PowerShell/
+# Windows run with no sh/curl required.
 $ErrorActionPreference = "Stop"
 Set-Location (Join-Path $PSScriptRoot "..")
 
@@ -42,10 +41,13 @@ Fetch $AlpineUrl "tests/alpine-minirootfs.tar.gz" $AlpineSha256
 
 # boot/KernelImage and boot/initramfs.cpio.gz - see fetch-guest-images.sh's
 # own comment for the full reasoning (reproducible Buildroot build,
-# published as a GitHub Release asset). Fetched via `gh release download`,
-# not Invoke-WebRequest - this repo is private, so the asset's own
-# browser_download_url 404s for anyone not authenticated (confirmed
-# directly). `gh` resolves credentials from GH_TOKEN/GITHUB_TOKEN if set,
+# published as a GitHub Release asset). A plain, unauthenticated
+# Invoke-WebRequest against the release asset's own browser_download_url
+# - same as Alpine's own fetch above - is tried first. `gh release
+# download` is only a fallback for that failing for some other reason (a
+# proxy/firewall blocking github.com's own release-asset host, a renamed/
+# deleted asset this script's own pinned URL hasn't caught up with,
+# etc.) - `gh` resolves credentials from GH_TOKEN/GITHUB_TOKEN if set,
 # otherwise from a local `gh auth login`.
 function Fetch-GuestImagesRelease([string]$ReleaseTag, [string]$AssetName, [string]$Destination, [string]$ExpectedSha256) {
     if (Test-Path $Destination) {
@@ -55,13 +57,21 @@ function Fetch-GuestImagesRelease([string]$ReleaseTag, [string]$AssetName, [stri
             return
         }
     }
-    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
-        Write-Error "fetch-guest-images: FAIL - 'gh' (GitHub CLI) not found. This repo is private, so downloading a release asset needs it - install from https://cli.github.com/ and run 'gh auth login', or set GH_TOKEN/GITHUB_TOKEN (CI already does this for this exact step)."
-        exit 1
-    }
     $dir = Split-Path -Parent $Destination
     if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
-    Write-Host "fetch-guest-images: downloading $AssetName from release $ReleaseTag (private repo - via gh, authenticated)"
+    $url = "https://github.com/eRkrAtFi/uhp-desktop/releases/download/$ReleaseTag/$AssetName"
+    Write-Host "fetch-guest-images: downloading $AssetName from release $ReleaseTag"
+    try {
+        Invoke-WebRequest -Uri $url -OutFile $Destination
+        Verify-Sha256 $Destination $ExpectedSha256
+        return
+    } catch {
+        Write-Host "fetch-guest-images: plain download failed - falling back to 'gh release download'"
+    }
+    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+        Write-Error "fetch-guest-images: FAIL - 'gh' (GitHub CLI) not found either. Install it from https://cli.github.com/ and run 'gh auth login', or set GH_TOKEN/GITHUB_TOKEN, then re-run this script."
+        exit 1
+    }
     gh release download $ReleaseTag --repo eRkrAtFi/uhp-desktop --pattern $AssetName --output $Destination --clobber
     Verify-Sha256 $Destination $ExpectedSha256
 }

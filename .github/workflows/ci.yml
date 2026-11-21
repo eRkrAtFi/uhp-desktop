@@ -63,16 +63,16 @@ jobs:
       # Buildroot build (see riscv-emu/buildroot/ and
       # .github/workflows/guest-images.yml), published as a release asset
       # since this repo deliberately does not commit it to git (see
-      # THIRD_PARTY.md). GH_TOKEN is required here specifically because
-      # this repo is private: scripts/fetch-guest-images.sh's own fetch
-      # of that asset goes through `gh release download`, not plain curl,
-      # since a private repo's release assets 404 for an unauthenticated
-      # request (confirmed directly) - GITHUB_TOKEN is what `gh` already
-      # auto-detects for this. A real fetch failure now fails this step
-      # (and the job) loudly rather than being silently tolerated - the
-      # kernel is no longer "not available yet" as a matter of course, so
-      # a failure here means something is actually wrong (bad token,
-      # asset renamed/deleted, ...) and deserves attention. The next
+      # THIRD_PARTY.md). scripts/fetch-guest-images.sh tries a plain,
+      # unauthenticated download of that asset first, falling back to
+      # `gh release download` only if that fails for some other reason -
+      # GH_TOKEN is set here so that fallback path works reliably in CI
+      # too, not because it is otherwise required. A real fetch failure
+      # now fails this step (and the job) loudly rather than being
+      # silently tolerated - the kernel is no longer "not available yet"
+      # as a matter of course, so a failure here means something is
+      # actually wrong (asset renamed/deleted, both download paths
+      # genuinely unreachable, ...) and deserves attention. The next
       # step's own if/else check is for other invocation paths (a
       # developer running these Makefile targets locally without having
       # run this fetch step first), not for tolerating a failure here.
