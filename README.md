@@ -43,6 +43,17 @@ for the full, honest list of known gaps and risks (storage/networking
 depth, security posture, multi-node readiness) and what's actually
 planned next.
 
+## Vision
+
+Where this project is headed: a platform/workload-centric lab for
+running anything emulated or virtualized (operating systems, firmware,
+kernels/bootloaders, bare-metal/embedded programs), with QEMU and
+riscv-emu as two interchangeable engines behind one model rather than
+two separate per-engine tools - see [`vision/VISION.md`](vision/VISION.md)
+for the full architecture, data model, and the incremental roadmap
+(one thin end-to-end slice before breadth, same as everything else in
+this project).
+
 ## Requirements
 
 - Windows 10/11 (x64).
