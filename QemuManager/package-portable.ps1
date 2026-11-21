@@ -1,15 +1,26 @@
 <#
 .SYNOPSIS
-  Builds the fully self-contained, "unzip and go" portable distribution:
-  publishes QemuManager.exe, then bundles a QEMU install and riscv-emu
-  next to it so Settings never needs touching on a fresh machine (see
-  AppSettings.DefaultQemuDir/DefaultRiscvEmuDir, which look for exactly
-  these two folder names next to the .exe before falling back to
-  C:\Program Files\qemu / unconfigured).
+  Builds the portable distribution: publishes QemuManager.exe, then
+  bundles riscv-emu next to it (so a riscv-emu VM needs zero setup - see
+  AppSettings.DefaultRiscvEmuDir, which checks for a "riscv-emu" folder
+  next to the .exe before falling back to unconfigured) and, only if
+  -QemuDir is passed explicitly, a full QEMU install too.
+
+  QEMU bundling is opt-in, not the default, specifically because of its
+  own size: a real QEMU install is 1GB+ uncompressed (~290MB zipped) and
+  made up almost entirely of architectures and EDK2 firmware this
+  project's own riscv64 target never touches - confirmed directly
+  against this script's own released output (qemu/ was 88.6% of the
+  portable zip's total uncompressed size). A user who wants real QEMU
+  VMs installs QEMU once, separately (see the main README's own
+  Requirements section) - the same install any other QEMU front end
+  would also expect, not a copy with no update path duplicated into
+  every release of this app.
 
 .PARAMETER QemuDir
-  An existing QEMU install to bundle. Copied wholesale (robocopy /MIR) -
-  every qemu-system-*.exe ships with shared data files (BIOS/EFI images,
+  An existing QEMU install to bundle - omit this (the default) to not
+  bundle QEMU at all. Copied wholesale (robocopy /MIR) when given - every
+  qemu-system-*.exe ships with shared data files (BIOS/EFI images,
   keymaps, DLLs) some of them depend on, so this does not try to guess
   which subset is "needed".
 
@@ -24,11 +35,11 @@
   Build configuration to publish. Default: Release.
 
 .EXAMPLE
-  .\package-portable.ps1
-  .\package-portable.ps1 -QemuDir "D:\qemu" -RiscvEmuDir "D:\riscv-emu"
+  .\package-portable.ps1                                    # riscv-emu only - what release.yml itself builds
+  .\package-portable.ps1 -QemuDir "C:\Program Files\qemu"    # also bundle a real QEMU install
 #>
 param(
-    [string]$QemuDir = "C:\Program Files\qemu",
+    [string]$QemuDir = "",
     [string]$RiscvEmuDir = (Join-Path $PSScriptRoot "..\riscv-emu"),
     [string]$Configuration = "Release"
 )
@@ -82,8 +93,11 @@ if (-not (Test-Path $portableFlag)) {
     Set-Content -Path $portableFlag -Value "This file marks $publishDir as a portable QemuManager bundle - see AppPaths.ResolveAppDataDir. Do not delete it if you want this folder's own data\ subfolder to keep being used."
 }
 
-if (-not (Test-Path $QemuDir)) {
-    Write-Warning "QEMU dir '$QemuDir' does not exist - skipping QEMU bundling. Pass -QemuDir to point at a real install."
+if ([string]::IsNullOrEmpty($QemuDir)) {
+    Write-Host "No -QemuDir given - not bundling QEMU (this is the default now, not an error - see this script's own .SYNOPSIS for why)." -ForegroundColor Cyan
+}
+elseif (-not (Test-Path $QemuDir)) {
+    Write-Warning "QEMU dir '$QemuDir' does not exist - skipping QEMU bundling."
 }
 else {
     $destQemu = Join-Path $publishDir "qemu"

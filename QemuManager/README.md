@@ -379,7 +379,7 @@ and even a disk image created earlier through "New..." all appeared next
 to the `.exe` automatically, and the running app still showed the same
 four VMs as before.
 
-## Fully portable (QEMU bundled)
+## Fully portable (riscv-emu bundled, QEMU opt-in)
 
 The "Portable by design" section above still left QEMU and riscv-emu as
 external dependencies, pointed at through Settings. `AppSettings`'s
@@ -393,17 +393,27 @@ This is only ever the *default value* written into a brand-new
 install, see above), whatever it says is authoritative and these defaults
 are never consulted again.
 
-`package-portable.ps1` builds the actual bundle: publishes the app, then
-copies a full QEMU install (`robocopy /MIR` - a real install is 1GB+ and
-ships shared files several `qemu-system-*.exe` binaries depend on, so this
-does not try to guess a subset) into `publish\qemu`, and just
-`riscv-emu.exe` + `boot\firmware.bin` (the entire runtime surface
+`package-portable.ps1` builds the actual bundle: publishes the app, copies
+just `riscv-emu.exe` + `boot\firmware.bin` (the entire runtime surface
 `RiscvEmuLocator` looks for - not the rest of that project's source, build
-tooling, or test logs) into `publish\riscv-emu`. Run it with:
+tooling, or test logs) into `publish\riscv-emu` always, and - only if
+`-QemuDir` is passed explicitly - a full QEMU install (`robocopy /MIR`, a
+real install is 1GB+ and ships shared files several `qemu-system-*.exe`
+binaries depend on, so this does not try to guess a subset) into
+`publish\qemu`. QEMU bundling used to be the default; confirmed directly
+against this project's own first few releases that `qemu/` was 88.6% of
+the portable zip's total uncompressed size (1256 of 1418 MB) - almost
+entirely EDK2 firmware and `qemu-system-*` binaries for architectures this
+project's own riscv64 target never touches - so it is opt-in now. A real
+QEMU VM still needs a real QEMU install; the main README's own
+Requirements section points at [qemu.weilnetz.de](https://qemu.weilnetz.de/w64/)
+for that, the same one-time, separately-updatable install any other QEMU
+front end would also expect, not a copy with no update path duplicated
+into every release of this app. Run it with:
 
 ```powershell
-.\package-portable.ps1                                    # uses C:\Program Files\qemu and ..\riscv-emu
-.\package-portable.ps1 -QemuDir "D:\qemu" -RiscvEmuDir "D:\riscv-emu"
+.\package-portable.ps1                                    # riscv-emu only (..\riscv-emu) - what release.yml itself builds
+.\package-portable.ps1 -QemuDir "C:\Program Files\qemu"    # also bundle a real QEMU install
 ```
 
 Verified end to end with the legacy `%APPDATA%\QemuManager` location
@@ -411,9 +421,10 @@ temporarily moved aside (to rule out it quietly supplying the paths
 instead) and the publish folder's own `data` deleted, to force a genuinely
 first-ever run: launched `QemuManager.exe` straight from the packaged
 `publish` folder with zero prior configuration anywhere, and its status
-bar read the bundled `...\publish\qemu (29 architectures)` and
-`...\publish\riscv-emu` paths with no Settings interaction at all - copy
-the whole `publish` folder anywhere and it works immediately.
+bar read the bundled `...\publish\riscv-emu` path (and, with `-QemuDir`
+passed, `...\publish\qemu (29 architectures)` too) with no Settings
+interaction at all - copy the whole `publish` folder anywhere and it
+works immediately.
 
 ## Build and run
 
