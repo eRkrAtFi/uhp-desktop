@@ -17,19 +17,21 @@
     <Product>Universal Hypervisor Platform (UHP)</Product>
     <AssemblyTitle>UHP Desktop</AssemblyTitle>
     <ApplicationIcon>Assets\uhp.ico</ApplicationIcon>
-    <!-- Bumped by hand at an actual tagged release (currently v0.1.0),
-         not automatically - SourceRevisionId below (short commit hash,
-         -dirty if the working tree has uncommitted changes, build
-         timestamp) is what actually makes two builds between releases
-         distinguishable, which is the part that needed to stop being
-         guessable from a build/publish timestamp someone could forget to
-         check. Read at runtime as
+    <!-- Set below (SetSourceRevisionId target), from the latest "v*"
+         git tag (via "git describe"), NOT a value bumped by hand here,
+         which drifted from the actual release tag at least once (this
+         file said 0.1.0 while the real release was already v0.2.0).
+         SourceRevisionId (short commit hash, -dirty if the working tree
+         has uncommitted changes, build timestamp) is what makes two
+         builds between releases distinguishable; Version itself is what
+         makes a build actually say which release it is. Read at runtime
+         as
          Assembly.GetEntryAssembly().GetCustomAttribute&lt;AssemblyInformationalVersionAttribute&gt;()
          (SettingsWindow, CrashLogger) and externally, with no need to
          run the app at all, via (Get-Item QemuManager.exe).VersionInfo.ProductVersion
          (finish.ps1's own last line) - both read the exact same string,
          the SDK's own standard mechanism for this, not a custom one. -->
-    <Version>0.1.0</Version>
+    <Version>0.0.0</Version>
     <!-- Self-contained single-file publish: the point is a standalone .exe
          that needs no separately-installed .NET runtime on the target
          machine. QEMU itself remains an external dependency, located at
@@ -58,6 +60,43 @@
        of it. git must be on PATH; if it is not (or this somehow is not
        a git checkout), GitHash falls back to "unknown" rather than
        failing the build over a version string. -->
+  <!-- Separate from SetSourceRevisionId below, and deliberately anchored
+       much earlier (BeforeTargets="BeforeBuild", not tied to
+       InitializeSourceControlInformation at all - git describe needs
+       nothing from the SDK's own source-control integration): Version
+       feeds into AssemblyInformationalVersion's own BASE value, which the
+       SDK computes well before InitializeSourceControlInformation runs -
+       confirmed directly (setting Version from the AfterTargets=
+       InitializeSourceControlInformation target below, same as
+       SourceRevisionId, left ProductVersion at the static fallback
+       "0.0.0" even though SourceRevisionId's own override from that same
+       target DID take effect - the two are not combined at the same
+       point in the build). -->
+  <Target Name="SetVersionFromGitTag" BeforeTargets="BeforeBuild">
+    <!-- The "tags" flag: a lightweight tag counts too, not just
+         annotated (this project's own release tags are annotated, but
+         no reason to depend on that). The "match" flag, "v*": guest-
+         images-v* tags exist in this same repo and must never be picked
+         up here. The "abbrev" flag at 0: just the tag name itself, no
+         distance-from-HEAD suffix - this build's own exact commit
+         distance/dirty state is already SourceRevisionId's own job, not
+         Version's. ContinueOnError, with a fallback (the static "0.0.0"
+         above), same reasoning as GitHash below: a missing git, a
+         shallow clone with no tags fetched, or a checkout with no v* tag
+         yet at all must not fail the build over a version string. -->
+    <Exec Command="git describe --tags --match &quot;v*&quot; --abbrev=0" ConsoleToMSBuild="true" StandardOutputImportance="low" ContinueOnError="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="GitVersionTagOutput" />
+      <Output TaskParameter="ExitCode" PropertyName="GitVersionTagExitCode" />
+    </Exec>
+    <PropertyGroup>
+      <!-- Strips the leading "v" ("v0.2.0" -> "0.2.0") - Version is a
+           plain dotted number, the SDK itself would reject a "v" prefix
+           when computing AssemblyVersion from it. -->
+      <GitVersionTag Condition="'$(GitVersionTagExitCode)' == '0' AND '$(GitVersionTagOutput)' != ''">$(GitVersionTagOutput)</GitVersionTag>
+      <Version Condition="'$(GitVersionTag)' != ''">$(GitVersionTag.TrimStart('v'))</Version>
+    </PropertyGroup>
+  </Target>
+
   <!-- AfterTargets="InitializeSourceControlInformation": the SDK's own
        git integration (active automatically once it detects this is a
        git checkout) sets SourceRevisionId itself, to the *full* 40-char
