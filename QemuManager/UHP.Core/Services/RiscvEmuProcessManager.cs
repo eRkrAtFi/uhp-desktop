@@ -133,30 +133,29 @@ public class RiscvEmuProcessManager : IConsoleSource
 
     /// <summary>Sends raw bytes to the guest's console input (riscv-emu's
     /// UART now has a real receive side - see riscv-emu/README.md's
-    /// "Console input" section). Paced in small chunks rather than one
-    /// bulk write, same reasoning as VmProcessManager.SendInput: a burst
-    /// write can silently drop bytes partway through on the guest side in
-    /// a way individual human keystrokes never do.</summary>
+    /// "Console input" section). One plain write, not byte-paced like
+    /// VmProcessManager's own SendInput (real QEMU's console still needs
+    /// that - see fs_compare.sh's own findings). riscv-emu's own
+    /// StdinRing used to silently drop bytes once it filled up faster
+    /// than the guest drained it, which per-byte pacing from here papered
+    /// over - fixed properly instead (the ring now waits for room rather
+    /// than dropping, see emu.h/main.c's own comments), proven lossless
+    /// for a single large (4096-byte), completely unpaced write by
+    /// riscv-emu/boot/burst_test.sh, so this no longer needs to pace
+    /// anything itself.</summary>
     public void SendInput(string vmId, byte[] data)
     {
         if (!_running.TryGetValue(vmId, out var running) || running.Process.HasExited) return;
         var stream = running.Process.StandardInput.BaseStream;
-        _ = SendPacedAsync(stream, data);
+        _ = SendAsync(stream, data);
     }
 
-    private static async Task SendPacedAsync(Stream stream, byte[] data)
+    private static async Task SendAsync(Stream stream, byte[] data)
     {
-        const int chunkSize = 1;
-        const int delayMs = 4;
         try
         {
-            for (var i = 0; i < data.Length; i += chunkSize)
-            {
-                var n = Math.Min(chunkSize, data.Length - i);
-                await stream.WriteAsync(data, i, n);
-                await stream.FlushAsync();
-                if (i + n < data.Length) await Task.Delay(delayMs);
-            }
+            await stream.WriteAsync(data, 0, data.Length);
+            await stream.FlushAsync();
         }
         catch
         {
