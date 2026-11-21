@@ -163,6 +163,24 @@ public partial class VmEditWindow : Window
         _vm.BootOrder = bootOrder;
         _vm.ExtraArgs = ExtraArgsBox.Text.Trim();
 
+        // Non-blocking - the VM is still saved either way, same as
+        // SettingsWindow's own identical check for the same reason (a
+        // user may well be preparing a VM's config before QEMU is even
+        // installed yet) - but a MessageBox here, not just inline text
+        // like Settings uses, because this window closes immediately
+        // after (DialogResult = true, right below) and inline text would
+        // never actually be seen. This is the other of the two places
+        // (together with Power On's own "No qemu-system-*.exe found in
+        // ..." result message) a user creating their first QEMU VM with
+        // no QEMU installed yet needs to hear about it from - not only
+        // Settings, which they may never have opened at all.
+        if (!QemuLocator.LooksLikeQemuDir(_qemuDir))
+        {
+            System.Windows.MessageBox.Show(this,
+                $"No qemu-system-*.exe found in \"{_qemuDir}\".\n\nThis VM will be saved, but Power On will fail until QEMU is installed and Settings points at it.",
+                "QEMU not found", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+
         DialogResult = true;
     }
 

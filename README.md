@@ -49,9 +49,12 @@ planned next.
 - [.NET 8 runtime](https://dotnet.microsoft.com/download/dotnet/8.0) to
   run UHP Desktop (the portable release bundle has no other
   prerequisite).
-- A QEMU install (e.g. [qemu.weilnetz.de](https://qemu.weilnetz.de/w64/))
-  if you want to run real QEMU VMs - UHP Desktop also works with only
-  `riscv-emu` VMs and no QEMU at all.
+- A QEMU install if you want to run real QEMU VMs -
+  `winget install --id SoftwareFreedomConservancy.QEMU -e`, or an
+  installer from [qemu.org](https://www.qemu.org/download/#windows) /
+  [qemu.weilnetz.de](https://qemu.weilnetz.de/w64/). Not needed at all
+  for `riscv-emu` VMs - UHP Desktop works with only those and no QEMU
+  install anywhere on the machine.
 - To **build** riscv-emu yourself (not required to just run it): a
   portable GCC such as [w64devkit](https://github.com/skeeto/w64devkit)
   for the interpreter itself, and LLVM/clang (for the guest test
