@@ -357,6 +357,23 @@ int main(int argc, char **argv)
      * QEMU's own stdout; in text mode the C runtime would turn the guest's
      * own LF into CR LF, which QEMU's raw passthrough does not do. */
     _setmode(_fileno(stdout), _O_BINARY);
+    /* stdin needs the same treatment, for the opposite-direction reason:
+     * in (the default) text mode, the CRT's own \r\n translation layer
+     * holds a lone \r read from a non-console (pipe/file) stdin, waiting
+     * to see whether the next byte is \n before deciding how to deliver
+     * it - confirmed directly (a bulk host-side write ending in a bare
+     * \r, with nothing queued after it, never reached stdin_reader_thread
+     * at all when this process had no console of its own - e.g. launched
+     * with Win32's CREATE_NO_WINDOW, as QemuManager's own
+     * RiscvEmuProcessManager does - while the exact same write succeeded
+     * immediately both from a real console-attached shell and from a
+     * child process allowed its own console). A guest whose line
+     * discipline treats bare \r as Enter (most of them: see VmConfig's
+     * own EnterSends remarks) would otherwise have that Enter silently
+     * swallowed whenever nothing else arrives on stdin right after it -
+     * exactly the symptom this fixes, not merely a cosmetic CRLF detail
+     * the way the stdout case above is. */
+    _setmode(_fileno(stdin), _O_BINARY);
 #endif
 
     m.mem_size = mem_size;

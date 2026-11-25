@@ -42,6 +42,7 @@
                 <RowDefinition Height="Auto"/> <RowDefinition Height="Auto"/> <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/> <RowDefinition Height="Auto"/> <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/> <RowDefinition Height="Auto"/> <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
             <TextBlock Grid.Row="0" Grid.Column="0" Text="Name"/>
@@ -109,7 +110,18 @@
                            FontSize="11" Opacity="0.7" TextWrapping="Wrap" Margin="0,-6,0,10"/>
             </StackPanel>
 
-            <TextBlock x:Name="ValidationText" Grid.Row="8" Grid.Column="1" Foreground="{StaticResource ErrorText}" TextWrapping="Wrap"/>
+            <TextBlock Grid.Row="8" Grid.Column="0" Text="Enter sends"/>
+            <StackPanel Grid.Row="8" Grid.Column="1" Orientation="Vertical">
+                <ComboBox x:Name="EnterSendsBox" AutomationProperties.Name="Enter sends selection">
+                    <ComboBoxItem Content="CR (default - this project's own Buildroot guest has icrnl on)"/>
+                    <ComboBoxItem Content="LF"/>
+                    <ComboBoxItem Content="CRLF"/>
+                </ComboBox>
+                <TextBlock Text="Change this only if Enter in the console does not submit a line - most guests need no change."
+                           FontSize="11" Opacity="0.7" TextWrapping="Wrap" Margin="0,-6,0,0"/>
+            </StackPanel>
+
+            <TextBlock x:Name="ValidationText" Grid.Row="9" Grid.Column="1" Foreground="{StaticResource ErrorText}" TextWrapping="Wrap"/>
         </Grid>
         </ScrollViewer>
     </DockPanel>

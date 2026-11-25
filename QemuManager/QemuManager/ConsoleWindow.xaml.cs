@@ -48,7 +48,7 @@ public partial class ConsoleWindow : Window
         Loaded += async (_, _) =>
         {
             await Terminal.InitializeAsync();
-            Terminal.Attach(_source, _vm.Id, _source.GetConsoleBuffer(_vm.Id));
+            Terminal.Attach(_source, _vm.Id, _source.GetConsoleBuffer(_vm.Id), _vm.EnterSends);
         };
         // Phase 5: this window no longer closes itself when the VM stops
         // (TerminalControl shows a "VM stopped" banner instead, output

@@ -13,6 +13,11 @@
     C# -> JS: {type:"output", data:"<base64>"}  - append guest bytes
               {type:"stopped"}                   - show the "VM stopped" banner
               {type:"clear"}                      - clear the scrollback
+              {type:"enterSends", value:"CR"|"LF"|"CRLF"} - this VM's own
+                line-ending setting (VmConfig.EnterSends) - sent on every
+                Attach, not just once at load, since the detail page's own
+                preview reuses one control across VMs that can each have a
+                different setting
     JS -> C#: {type:"ready"}                      - xterm is initialized, safe to seed/stream now
               {type:"input", data:"<string>"}     - what xterm's own onData produced
 
@@ -70,26 +75,34 @@
   // on the terminal's own host div catches that case too.
   new ResizeObserver(() => fitAddon.fit()).observe(document.getElementById("terminal"));
 
+  // What this VM's own console wants as a line ending - see VmConfig's
+  // own EnterSends remarks. Most guests have a real tty line discipline
+  // behind their console (confirmed directly via `stty -a` for this
+  // project's own riscv-emu/QEMU Buildroot guest: icrnl is on there), in
+  // which case xterm's own default "\r" for Enter already works with no
+  // help needed. A guest whose console lacks that layer entirely - a raw
+  // UART with no tty underneath (TinyCore's own corepure64_serial.gz is
+  // already one such case; see QemuManager/README.md's "Two real bugs"
+  // section) - needs this set to "LF" instead; a future bare-metal guest
+  // (vision/VISION.md) may need either, or "CRLF", depending on what its
+  // own UART driver treats as a line terminator. Set via a runtime
+  // message (TerminalControl.Attach), not baked in at load time, since
+  // the VM detail page's own preview reuses one control across VMs that
+  // can each have a different setting.
+  let enterSends = "CR";
+  const EOL = { CR: "\r", LF: "\n", CRLF: "\r\n" };
+
   // Keystrokes -> C# -> guest. xterm's own onData already encodes
   // everything a real terminal would (Ctrl+C -> \x03, Tab -> \t, arrows
   // -> ESC [ A/B/C/D, pasted text -> itself, verbatim) with no Enter
   // needed to "submit" anything - sent as-is, one message per onData
-  // firing, not buffered into a line first.
-  //
-  // One exception: xterm's own Enter key produces "\r" (standard - a real
-  // terminal's physical Enter key does the same, relying on the remote
-  // tty's own ICRNL to turn it into a line ending). Both this app's guest
-  // consoles are a raw virtual UART with no such tty layer in between -
-  // confirmed already, the hard way, before Phase 5 existed (see
-  // QemuManager/README.md's own "Two real bugs" section, and
-  // RiscvEmuProcessManager.ShutdownAsync's explicit "+ \"\\n\"" - every
-  // other hand-rolled sender in this codebase already had to work around
-  // exactly this). Translating here keeps that one, already-established
-  // behavior instead of quietly losing it to xterm's own default - a
-  // pasted block's own "\r\n" line endings collapse to a single "\n" too,
-  // rather than doubling every line into a blank one in between.
+  // firing, not buffered into a line first. Every line-ending variant
+  // (xterm's own "\r" for Enter, or a pasted block's own "\r\n"/"\n")
+  // normalizes to enterSends' own EOL - not just "\r", since a future
+  // bare-metal guest with no tty discipline at all may only recognize
+  // the one exact byte sequence its own UART driver polls for.
   term.onData((data) => {
-    const translated = data.replace(/\r\n|\r/g, "\n");
+    const translated = data.replace(/\r\n|\r|\n/g, EOL[enterSends] || "\r");
     window.chrome.webview.postMessage({ type: "input", data: translated });
   });
 
@@ -119,15 +132,18 @@
       }
       return true; // no selection - let xterm send \x03 as normal
     }
-    // Ctrl+V - xterm has no built-in binding for this at all (confirmed
-    // directly: left unhandled, it falls through to xterm's own default
-    // Ctrl+<letter> key mapping instead, sending the guest a literal 0x16
-    // control byte - visible there as a bare "^V" echo, not a paste).
-    // term.paste() feeds clipboard text through the exact same path a
-    // real OS-level paste event would (xterm's own newline/bracketed-
-    // paste handling included), matching every other application's own
-    // paste shortcut instead of requiring a terminal-specific one.
-    if (ctrl && !shift && (e.key === "v" || e.key === "V")) {
+    // Ctrl+V (and Ctrl+Shift+V, the convention some terminals reserve for
+    // paste specifically because plain Ctrl+V is a real control character
+    // elsewhere in a shell) - xterm has no built-in binding for either at
+    // all (confirmed directly: left unhandled, Ctrl+V falls through to
+    // xterm's own default Ctrl+<letter> key mapping instead, sending the
+    // guest a literal 0x16 control byte - visible there as a bare "^V"
+    // echo, not a paste). term.paste() feeds clipboard text through the
+    // exact same path a real OS-level paste event would (onData's own
+    // line-ending translation above included), matching every other
+    // application's own paste shortcut instead of requiring a terminal-
+    // specific one.
+    if (ctrl && (e.key === "v" || e.key === "V")) {
       navigator.clipboard.readText().then((text) => term.paste(text));
       return false;
     }
@@ -162,6 +178,8 @@
     } else if (msg.type === "clear") {
       term.clear();
       document.getElementById("stopped-banner").style.display = "none";
+    } else if (msg.type === "enterSends") {
+      enterSends = msg.value;
     }
   });
 

@@ -97,6 +97,7 @@ public partial class VmEditWindow : Window
         NetworkBox.SelectedIndex = _vm.NetworkMode == "none" ? 1 : 0;
         DisplayBox.SelectedIndex = _vm.Display switch { "sdl" => 1, "console" => 2, "vnc" => 3, _ => 0 };
         BootOrderBox.Text = _vm.BootOrder;
+        EnterSendsBox.SelectedIndex = _vm.EnterSends switch { "LF" => 1, "CRLF" => 2, _ => 0 };
         ExtraArgsBox.Text = _vm.ExtraArgs;
     }
 
@@ -163,6 +164,7 @@ public partial class VmEditWindow : Window
         _vm.NetworkMode = NetworkBox.SelectedIndex == 1 ? "none" : "user";
         _vm.Display = DisplayBox.SelectedIndex switch { 1 => "sdl", 2 => "console", 3 => "vnc", _ => "gtk" };
         _vm.BootOrder = bootOrder;
+        _vm.EnterSends = EnterSendsBox.SelectedIndex switch { 1 => "LF", 2 => "CRLF", _ => "CR" };
         _vm.ExtraArgs = ExtraArgsBox.Text.Trim();
 
         // Non-blocking - the VM is still saved either way, same as

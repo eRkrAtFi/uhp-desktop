@@ -109,5 +109,20 @@ public class VmConfig
     /// changing this default on the strength of a guess.</summary>
     public string ShutdownCommand { get; set; } = "poweroff";
 
+    /// <summary>What the terminal's own Enter key sends down this VM's
+    /// console: "CR" (default, matching a real terminal), "LF", or "CRLF".
+    /// A real tty's own ICRNL setting is what normally turns a plain CR
+    /// into a line break on the guest side (confirmed directly for this
+    /// project's own riscv-emu/QEMU Buildroot guest via `stty -a` - icrnl
+    /// is on, so the default needs no help), so this only needs to change
+    /// for a guest whose console lacks that layer - a raw UART with no
+    /// tty line discipline behind it at all (TinyCore's own
+    /// corepure64_serial.gz console is already one such case; see
+    /// QemuManager/README.md's "Two real bugs" section) or, per
+    /// vision/VISION.md, a future bare-metal guest, where it may need
+    /// either value depending on what that specific program's own UART
+    /// driver treats as a line terminator.</summary>
+    public string EnterSends { get; set; } = "CR";
+
     public DateTime CreatedUtc { get; set; } = DateTime.UtcNow;
 }

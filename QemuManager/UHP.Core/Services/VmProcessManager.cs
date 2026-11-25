@@ -38,6 +38,12 @@ public class RunningVm
     /// VmProcessManager.GetResourceUsage.</summary>
     public TimeSpan LastCpuTime { get; set; }
     public DateTime LastSampleTime { get; set; } = DateTime.UtcNow;
+
+    /// <summary>Serializes SendInput's own writes to this VM's stdin - see
+    /// SendInput's own remarks for why this exists. Guarded by
+    /// WriteChainLock, not accessed directly.</summary>
+    public Task WriteChain = Task.CompletedTask;
+    public readonly object WriteChainLock = new();
 }
 
 /// <summary>
@@ -210,12 +216,26 @@ public class VmProcessManager : IConsoleSource
     /// middle of it (a human typing the same line, one keystroke at a
     /// time, never hits this - it's specifically bursty writes that do).
     /// Fire-and-forget on a background task so a long paste can't freeze
-    /// the UI thread for the whole pacing delay.</summary>
+    /// the UI thread for the whole pacing delay.
+    ///
+    /// Chained onto running.WriteChain, not fired independently - see
+    /// RiscvEmuProcessManager.SendInput's own remarks for the exact bug
+    /// this avoids (two overlapping, unordered writes to the same stream,
+    /// now that Phase 5's xterm-based console calls this once per
+    /// keystroke rather than once per whole typed line). This engine's
+    /// own per-call byte pacing below made the overlap window for that
+    /// race even wider than RiscvEmuProcessManager's single-write case,
+    /// not narrower - a several-byte paced write already takes multiple
+    /// times the pacing delay to finish, during which a fast typist's
+    /// next keystroke was already calling SendInput again.</summary>
     public void SendInput(string vmId, byte[] data)
     {
         if (!_running.TryGetValue(vmId, out var running) || !running.ConsoleMode || running.Process.HasExited) return;
         var stream = running.Process.StandardInput.BaseStream;
-        _ = SendPacedAsync(stream, data);
+        lock (running.WriteChainLock)
+        {
+            running.WriteChain = running.WriteChain.ContinueWith(_ => SendPacedAsync(stream, data)).Unwrap();
+        }
     }
 
     /// <summary>Real host-side CPU percent (0-100, already divided by core

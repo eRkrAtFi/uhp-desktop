@@ -451,6 +451,24 @@ loops on getchar, echoes whatever it reads via putchar) piping bytes into
 stdout - this is also what caught the `a0`/`a1` bug above, since the
 echoed bytes were wrong (always 0) before that fix.
 
+A second, host-side-only bug surfaced later, through QemuManager's own
+Phase 5 terminal (xterm.js - see `QemuManager/QemuManager/Assets/terminal.html`):
+a lone trailing `\r` (a real terminal's Enter key, with nothing queued
+after it) sent from a parent process that gave this one **no console of
+its own** (Win32's `CREATE_NO_WINDOW`, exactly what
+`RiscvEmuProcessManager.Start` uses) never reached `stdin_reader_thread`
+at all - confirmed directly: the exact same write succeeded immediately
+both from a real console-attached shell and from a child process allowed
+its own console, and failed consistently (for any amount of waiting)
+only under `CREATE_NO_WINDOW`. Cause: stdin defaults to **text mode** on
+this C runtime, same as stdout did before its own `_setmode(...,
+_O_BINARY)` fix above - but in the read direction, text mode's `\r\n`
+translation logic holds a lone `\r` back, waiting to see whether a
+following `\n` arrives before deciding how to deliver it, and with
+nothing else queued behind it, that wait never ends. Fixed the same way
+stdout already was: `_setmode(_fileno(stdin), _O_BINARY)`, right next to
+it in `main()`.
+
 ## Build
 
 ```sh

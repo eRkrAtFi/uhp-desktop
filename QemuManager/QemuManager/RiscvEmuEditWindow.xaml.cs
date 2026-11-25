@@ -29,6 +29,7 @@ public partial class RiscvEmuEditWindow : Window
         NetworkCheckBox.IsChecked = _vm.NetworkMode == "user";
         ExtraArgsBox.Text = _vm.ExtraArgs;
         ShutdownCommandBox.Text = _vm.ShutdownCommand;
+        EnterSendsBox.SelectedIndex = _vm.EnterSends switch { "LF" => 1, "CRLF" => 2, _ => 0 };
     }
 
     private void KernelBrowseButton_Click(object sender, RoutedEventArgs e)
@@ -92,6 +93,7 @@ public partial class RiscvEmuEditWindow : Window
         _vm.NetworkMode = NetworkCheckBox.IsChecked == true ? "user" : "none";
         _vm.ExtraArgs = ExtraArgsBox.Text.Trim();
         _vm.ShutdownCommand = shutdownCommand;
+        _vm.EnterSends = EnterSendsBox.SelectedIndex switch { 1 => "LF", 2 => "CRLF", _ => "CR" };
 
         DialogResult = true;
     }

@@ -608,7 +608,7 @@ public partial class MainWindow : Window
             // OutputReceived keeps it live on its own, not tied to the
             // ~2s stats cadence at all.
             RedrawCpuHistory(selectedVm.Config.Id);
-            ConsolePreviewTerminal.Attach(_vmService, selectedVm.Config.Id, _vmService.GetConsoleBuffer(selectedVm.Config.Id));
+            ConsolePreviewTerminal.Attach(_vmService, selectedVm.Config.Id, _vmService.GetConsoleBuffer(selectedVm.Config.Id), selectedVm.Config.EnterSends);
         }
         HostPage.Visibility = tag == "Host" ? Visibility.Visible : Visibility.Collapsed;
         EnginesPage.Visibility = tag == "Engines" ? Visibility.Visible : Visibility.Collapsed;

@@ -31,6 +31,7 @@ public partial class TerminalControl : UserControl
 {
     private IConsoleSource? _source;
     private string? _vmId;
+    private string _enterSends = "CR";
     private bool _jsReady;
     // Buffered until the JS side signals "ready" (term created, fit done) -
     // output can start arriving (OutputReceived) before WebView2 finishes
@@ -89,8 +90,13 @@ public partial class TerminalControl : UserControl
     /// <summary>Starts showing vmId's own console - replays whatever
     /// Core already captured (GetConsoleBuffer), then streams live output
     /// as it arrives. Call Detach() first if this control was already
-    /// showing a different VM.</summary>
-    public void Attach(IConsoleSource source, string vmId, string alreadyCapturedBuffer)
+    /// showing a different VM. enterSends is that VM's own
+    /// VmConfig.EnterSends (what the terminal's Enter key should actually
+    /// send down this specific console - see its own remarks) - re-sent
+    /// to terminal.html on every call since the detail page's own preview
+    /// reuses one control across VMs that can each have a different
+    /// setting.</summary>
+    public void Attach(IConsoleSource source, string vmId, string alreadyCapturedBuffer, string enterSends = "CR")
     {
         // Clears whatever a previous VM's own Attach left behind first -
         // without this, switching the detail page between two VMs would
@@ -101,8 +107,10 @@ public partial class TerminalControl : UserControl
         Clear();
         _source = source;
         _vmId = vmId;
+        _enterSends = enterSends;
         _source.OutputReceived += OnOutputReceived;
         _source.ProcessExited += OnProcessExited;
+        SendEnterSends();
 
         if (alreadyCapturedBuffer.Length > 0)
         {
@@ -175,6 +183,16 @@ public partial class TerminalControl : UserControl
     private void PostOutput(byte[] data) =>
         PostMessage(new { type = "output", data = Convert.ToBase64String(data) });
 
+    // Only meaningful once the JS side is ready (same reasoning as
+    // PostMessage's own CoreWebView2-null check) - if Attach ran before
+    // that, OnWebMessageReceived's own "ready" case calls this again once
+    // it actually can be delivered, using whatever _enterSends Attach
+    // already set.
+    private void SendEnterSends()
+    {
+        if (_jsReady) PostMessage(new { type = "enterSends", value = _enterSends });
+    }
+
     private void PostMessage(object message)
     {
         if (Webview.CoreWebView2 == null) return;
@@ -189,6 +207,7 @@ public partial class TerminalControl : UserControl
         {
             case "ready":
                 _jsReady = true;
+                SendEnterSends();
                 while (_pendingOutput.Count > 0) PostOutput(_pendingOutput.Dequeue());
                 break;
             case "input":

@@ -24,6 +24,12 @@ public class RunningRiscvEmu
     /// <summary>Previous CPU-time sample - see RiscvEmuProcessManager.GetResourceUsage.</summary>
     public TimeSpan LastCpuTime { get; set; }
     public DateTime LastSampleTime { get; set; } = DateTime.UtcNow;
+
+    /// <summary>Serializes SendInput's own writes to this VM's stdin - see
+    /// SendInput's own remarks for why this exists. Guarded by
+    /// WriteChainLock, not accessed directly.</summary>
+    public Task WriteChain = Task.CompletedTask;
+    public readonly object WriteChainLock = new();
 }
 
 /// <summary>
@@ -142,12 +148,30 @@ public class RiscvEmuProcessManager : IConsoleSource
     /// than dropping, see emu.h/main.c's own comments), proven lossless
     /// for a single large (4096-byte), completely unpaced write by
     /// riscv-emu/boot/burst_test.sh, so this no longer needs to pace
-    /// anything itself.</summary>
+    /// anything itself.
+    ///
+    /// Chained onto running.WriteChain rather than fired directly -
+    /// Phase 5's xterm-based console calls this once per keystroke, not
+    /// once per whole typed line the way the old Send-button UI did, so
+    /// two of these can legitimately be in flight at once (one for each
+    /// of two fast keystrokes). Firing both as independent, unawaited
+    /// WriteAsync calls on the same StandardInput stream has no ordering
+    /// guarantee between them - confirmed directly: a bare Enter (\r) in
+    /// the console sat on an unsubmitted line while its own characters
+    /// were all visibly present, because the \r's write had actually
+    /// landed ahead of one of the preceding characters'. Chaining each
+    /// write as a continuation of the previous one serializes them in
+    /// the exact order SendInput was called, with no delay added for the
+    /// overwhelmingly common case of one call completing well before the
+    /// next arrives.</summary>
     public void SendInput(string vmId, byte[] data)
     {
         if (!_running.TryGetValue(vmId, out var running) || running.Process.HasExited) return;
         var stream = running.Process.StandardInput.BaseStream;
-        _ = SendAsync(stream, data);
+        lock (running.WriteChainLock)
+        {
+            running.WriteChain = running.WriteChain.ContinueWith(_ => SendAsync(stream, data)).Unwrap();
+        }
     }
 
     private static async Task SendAsync(Stream stream, byte[] data)

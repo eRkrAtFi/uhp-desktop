@@ -142,7 +142,13 @@ test, no GUI involved:
 - Also: a real serial terminal's convention of sending CR (`\r`) for
   Enter turned out not to apply here - this guest's tty line discipline
   never treated `\r` as end-of-line at all (every send just landed on the
-  same open line), while plain `\n` did. `ConsoleWindow` sends `\n` now.
+  same open line), while plain `\n` did. Confirmed since as a console-
+  level ICRNL difference, not something specific to this one image: the
+  project's own riscv-emu/QEMU Buildroot guest has ICRNL on (`stty -a`),
+  so the terminal's default of sending plain CR already works there with
+  no help needed, while TinyCore's own console (set up above) does not.
+  Each VM's own Edit window now has an "Enter sends" setting (CR/LF/CRLF,
+  default CR) for exactly this - TinyCore's VM config sets it to LF.
 
 ## Guided machine type / firmware for non-x86_64 architectures
 
