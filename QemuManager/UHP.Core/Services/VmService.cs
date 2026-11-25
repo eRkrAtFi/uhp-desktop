@@ -22,6 +22,16 @@ public class VmService : IVmService, IDisposable
     private readonly VmProcessManager _qemu = new();
     private readonly RiscvEmuProcessManager _riscv = new();
 
+    // The one place a new engine gets registered (see
+    // vision/VISION.md's roadmap item 5) - everything below looks an
+    // engine up here by VmConfig instead of branching on VmConfig.Kind
+    // itself. _qemu/_riscv stay as typed fields (not just entries in
+    // _engines) only because a couple of things below are genuinely
+    // engine-specific rather than part of IEngine's own common surface
+    // (riscv-emu's own StatsReceived/MIPS signal - no other engine has
+    // anything like it, and IEngine does not need to pretend otherwise).
+    private readonly EngineRegistry _engines;
+
     // The configs this instance knows about - populated by LoadAll, kept in
     // sync by Save/Delete - so the stats timer below has something to poll
     // without the UI having to hand it a list every tick.
@@ -89,6 +99,8 @@ public class VmService : IVmService, IDisposable
 
     public VmService()
     {
+        _engines = new EngineRegistry(_qemu, _riscv);
+
         _riscv.StatsReceived += (vmId, s) => { lock (_latestRiscvStats) _latestRiscvStats[vmId] = (s.Instructions, s.Mips); };
         ProcessExited += vmId =>
         {
@@ -101,16 +113,20 @@ public class VmService : IVmService, IDisposable
             // the last thing the guest said (e.g. "Power down") needs to
             // stay readable after the process is already gone.
         };
-        _qemu.OutputReceived += AppendToConsoleBuffer;
-        _riscv.OutputReceived += AppendToConsoleBuffer;
-        // Wired directly to each engine's own event, not through this
-        // class's own StateChanged property above - that property has no
-        // backing delegate of its own (its add/remove just forward to
-        // _qemu/_riscv directly), so there is nothing for this class
-        // itself to subscribe to there even though external callers
-        // (MainWindow) can.
-        _qemu.StateChanged += DetectUnexpectedStop;
-        _riscv.StateChanged += DetectUnexpectedStop;
+        // Wired through _engines.All, not two separate per-engine
+        // subscriptions - a third engine registered here later (see
+        // EngineRegistry's own remarks) gets these for free.
+        foreach (var engine in _engines.All)
+        {
+            engine.OutputReceived += AppendToConsoleBuffer;
+            // Wired directly to each engine's own event, not through this
+            // class's own StateChanged property below - that property has
+            // no backing delegate of its own (its add/remove just forward
+            // to each registered engine directly), so there is nothing for
+            // this class itself to subscribe to there even though external
+            // callers (MainWindow) can.
+            engine.StateChanged += DetectUnexpectedStop;
+        }
         _statsTimer = new Timer(async _ => await PollStatsAsync(), null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
     }
 
@@ -238,25 +254,23 @@ public class VmService : IVmService, IDisposable
 
     public event Action? StateChanged
     {
-        add { _qemu.StateChanged += value; _riscv.StateChanged += value; }
-        remove { _qemu.StateChanged -= value; _riscv.StateChanged -= value; }
+        add { foreach (var e in _engines.All) e.StateChanged += value; }
+        remove { foreach (var e in _engines.All) e.StateChanged -= value; }
     }
 
     public event Action<string, byte[]>? OutputReceived
     {
-        add { _qemu.OutputReceived += value; _riscv.OutputReceived += value; }
-        remove { _qemu.OutputReceived -= value; _riscv.OutputReceived -= value; }
+        add { foreach (var e in _engines.All) e.OutputReceived += value; }
+        remove { foreach (var e in _engines.All) e.OutputReceived -= value; }
     }
 
     public event Action<string>? ProcessExited
     {
-        add { _qemu.ProcessExited += value; _riscv.ProcessExited += value; }
-        remove { _qemu.ProcessExited -= value; _riscv.ProcessExited -= value; }
+        add { foreach (var e in _engines.All) e.ProcessExited += value; }
+        remove { foreach (var e in _engines.All) e.ProcessExited -= value; }
     }
 
     public event Action<string, VmStats>? StatsReceived;
-
-    private static bool IsRiscv(VmConfig vm) => vm.Kind == "RiscvEmu";
 
     public IReadOnlyList<VmConfig> LoadAll()
     {
@@ -278,93 +292,23 @@ public class VmService : IVmService, IDisposable
         lock (_configsLock) { _configs.RemoveAll(c => c.Id == vm.Id); }
     }
 
-    public VmConfig CreateDraft(string kind)
-    {
-        var vm = new VmConfig { Kind = kind };
-        // VmConfig.MemoryMB's class default (2048) is sized for QEMU;
-        // riscv-emu gets its own, smaller sensible default here instead of
-        // silently inheriting that one.
-        if (kind == "RiscvEmu") vm.MemoryMB = 512;
-        return vm;
-    }
+    public VmConfig CreateDraft(string kind) => _engines.Get(kind).CreateDraft();
 
-    public VmState GetState(VmConfig vm)
-    {
-        if (IsRiscv(vm)) return _riscv.GetState(vm.Id) switch
-        {
-            RiscvEmuRunState.Running => VmState.Running,
-            RiscvEmuRunState.Stopping => VmState.Stopping,
-            _ => VmState.Stopped,
-        };
-        return _qemu.GetState(vm.Id) switch
-        {
-            VmRunState.Starting => VmState.Starting,
-            VmRunState.Running => VmState.Running,
-            VmRunState.Stopping => VmState.Stopping,
-            _ => VmState.Stopped,
-        };
-    }
+    public VmState GetState(VmConfig vm) => _engines.GetFor(vm).GetVmState(vm.Id);
 
-    public bool IsRunning(VmConfig vm) => IsRiscv(vm) ? _riscv.IsRunning(vm.Id) : _qemu.IsRunning(vm.Id);
+    public bool IsRunning(VmConfig vm) => _engines.GetFor(vm).IsRunning(vm.Id);
 
     public VmSnapshot GetSnapshot(VmConfig vm)
     {
-        var usage = IsRiscv(vm) ? _riscv.GetResourceUsage(vm.Id) : _qemu.GetResourceUsage(vm.Id);
-        var uptime = IsRiscv(vm) ? _riscv.GetUptime(vm.Id) : _qemu.GetUptime(vm.Id);
+        var engine = _engines.GetFor(vm);
+        var usage = engine.GetResourceUsage(vm.Id);
+        var uptime = engine.GetUptime(vm.Id);
         return new VmSnapshot(GetState(vm), usage?.cpuPercent ?? 0, usage?.memoryBytes ?? 0, uptime);
     }
 
-    public async Task<string?> GetGuestDetailAsync(VmConfig vm)
-    {
-        // riscv-emu has no QMP-equivalent control channel to ask (see
-        // RiscvEmuProcessManager's own class remarks) - this is the one
-        // engine-specific gap the interface's doc comment calls out by
-        // name, not a difference the caller has to know about itself.
-        if (IsRiscv(vm)) return null;
-        if (_qemu.GetState(vm.Id) != VmRunState.Running) return null;
-        return await _qemu.QueryGuestStatusAsync(vm);
-    }
+    public Task<string?> GetGuestDetailAsync(VmConfig vm) => _engines.GetFor(vm).GetGuestDetailAsync(vm);
 
-    public VmHardwareDescription GetHardwareDescription(VmConfig vm)
-    {
-        var disk = string.IsNullOrWhiteSpace(vm.DiskPath) ? "None" : vm.DiskPath;
-        var network = vm.NetworkMode == "user"
-            ? (IsRiscv(vm) ? "virtio-net (user-mode NAT)" : "User-mode NAT")
-            : "None";
-
-        if (IsRiscv(vm))
-        {
-            return new VmHardwareDescription(
-                EngineDisplayName: "riscv-emu",
-                Architecture: "riscv64",
-                CpuDescription: "1 hart (fixed - no SMP yet)",
-                MemoryDescription: $"{vm.MemoryMB} MB",
-                DiskDescription: disk == "None" ? disk : $"{disk} (virtio-blk)",
-                NetworkDescription: network,
-                ConsoleDescription: "Serial (UART)",
-                AcceleratorDescription: "Interpreter (this project's own CPU emulation)",
-                SupportsGuestDetail: false,
-                SupportsSpeedMetric: true);
-        }
-
-        var console = vm.Display switch
-        {
-            "console" => "Serial (text, in this app)",
-            "vnc" => "VNC (headless)",
-            _ => $"{vm.Display} window (QEMU's own)",
-        };
-        return new VmHardwareDescription(
-            EngineDisplayName: "QEMU",
-            Architecture: vm.Architecture,
-            CpuDescription: $"{vm.CpuCores} core{(vm.CpuCores == 1 ? "" : "s")}",
-            MemoryDescription: $"{vm.MemoryMB} MB",
-            DiskDescription: disk,
-            NetworkDescription: network,
-            ConsoleDescription: console,
-            AcceleratorDescription: vm.Accelerator,
-            SupportsGuestDetail: true,
-            SupportsSpeedMetric: false);
-    }
+    public VmHardwareDescription GetHardwareDescription(VmConfig vm) => _engines.GetFor(vm).GetHardwareDescription(vm);
 
     public async Task<string> StartAsync(VmConfig vm, AppSettings settings)
     {
@@ -395,7 +339,7 @@ public class VmService : IVmService, IDisposable
             // never explicitly saved. The same dedup Save already does, so
             // starting an already-known VM twice is still a no-op here.
             lock (_configsLock) { if (!_configs.Any(c => c.Id == vm.Id)) _configs.Add(vm); }
-            var message = IsRiscv(vm) ? _riscv.Start(vm, settings.RiscvEmuDir) : await _qemu.StartAsync(vm, settings.QemuDir);
+            var message = await _engines.GetFor(vm).StartAsync(vm, settings);
             // Success is read from the VM's own resulting state, not from
             // parsing the message string - the actual source of truth for
             // whether this worked, and the same check regardless of which
@@ -412,16 +356,7 @@ public class VmService : IVmService, IDisposable
         var taskId = _history.BeginTask("Shut Down", vm.Name);
         try
         {
-            ShutdownResult result;
-            if (IsRiscv(vm))
-            {
-                var timeout = TimeSpan.FromSeconds(Math.Max(1, settings.RiscvShutdownTimeoutSeconds));
-                result = await _riscv.ShutdownGracefullyAsync(vm, timeout);
-            }
-            else
-            {
-                result = new ShutdownResult(await _qemu.StopGracefullyAsync(vm), false);
-            }
+            var result = await _engines.GetFor(vm).ShutdownAsync(vm, settings);
             // TimedOut is the real success/failure signal here (see
             // ShutdownResult's own remarks) - always false for QEMU, which
             // only ever reports "the ACPI request was sent", not whether
@@ -439,7 +374,7 @@ public class VmService : IVmService, IDisposable
         if (!TryBeginAction(vm.Id)) return "Another action is already in progress for this VM.";
         try
         {
-            var message = IsRiscv(vm) ? _riscv.ForceStop(vm) : _qemu.ForceStop(vm);
+            var message = _engines.GetFor(vm).ForceStop(vm);
             // No BeginTask/CompleteTask pair - Force Stop is near-instant
             // (Process.Kill, not an awaited guest-side negotiation), so
             // RecordInstant's "started and completed at once" fits better
@@ -461,30 +396,22 @@ public class VmService : IVmService, IDisposable
         remove => _history.Changed -= value;
     }
 
-    // A VM ID belongs to exactly one engine's _running dictionary; the
-    // other engine's manager just finds nothing for that ID and no-ops
-    // (see VmProcessManager/RiscvEmuProcessManager.SendInput). Forwarding
-    // to both unconditionally is correct, not a shortcut - it avoids this
-    // service needing its own vmId-to-engine lookup table that would only
-    // ever duplicate what each manager's own _running dictionary already is.
+    // A VM ID belongs to exactly one registered engine's own _running
+    // dictionary; every other engine just finds nothing for that ID and
+    // no-ops (see VmProcessManager/RiscvEmuProcessManager.SendInput).
+    // Forwarding to every registered engine unconditionally is correct,
+    // not a shortcut - it avoids this service needing its own vmId-to-
+    // engine lookup table that would only ever duplicate what each
+    // engine's own _running dictionary already is.
     public void SendInput(string vmId, byte[] data)
     {
-        _qemu.SendInput(vmId, data);
-        _riscv.SendInput(vmId, data);
+        foreach (var engine in _engines.All) engine.SendInput(vmId, data);
     }
 
-    public (ConsoleAvailability kind, string? detail) GetConsoleAvailability(VmConfig vm)
-    {
-        if (IsRiscv(vm))
-            return _riscv.IsRunning(vm.Id) ? (ConsoleAvailability.Stream, null) : (ConsoleAvailability.NotRunning, null);
+    public (ConsoleAvailability kind, string? detail) GetConsoleAvailability(VmConfig vm) =>
+        _engines.GetFor(vm).GetConsoleAvailability(vm);
 
-        if (!_qemu.IsRunning(vm.Id)) return (ConsoleAvailability.NotRunning, null);
-        if (vm.Display == "vnc") return (ConsoleAvailability.Vnc, _qemu.GetVncEndpoint(vm.Id));
-        if (vm.Display == "console") return (ConsoleAvailability.Stream, null);
-        return (ConsoleAvailability.ExternalWindow, null);
-    }
-
-    public bool TryReattach(VmConfig vm) => IsRiscv(vm) ? _riscv.TryReattach(vm) : _qemu.TryReattach(vm);
+    public bool TryReattach(VmConfig vm) => _engines.GetFor(vm).TryReattach(vm);
 
     private async Task PollStatsAsync()
     {

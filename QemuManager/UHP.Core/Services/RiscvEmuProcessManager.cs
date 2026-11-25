@@ -42,11 +42,63 @@ public class RunningRiscvEmu
 /// way to stop one, for when a graceful wait is not what is wanted or
 /// has already timed out.
 /// </summary>
-public class RiscvEmuProcessManager : IConsoleSource
+public class RiscvEmuProcessManager : IEngine
 {
     private readonly Dictionary<string, RunningRiscvEmu> _running = new();
 
     public event Action? StateChanged;
+
+    // --- IEngine (vision/VISION.md roadmap item 1) - additive, same
+    // reasoning as VmProcessManager's own identical section: nothing
+    // already public above changes signature or behavior. ---
+
+    public string Id => "RiscvEmu";
+    public string DisplayName => "riscv-emu";
+    public bool CanHandle(VmConfig vm) => vm.Kind == Id;
+
+    /// <summary>VmConfig.MemoryMB's class default (2048) is sized for
+    /// QEMU; riscv-emu gets its own, smaller sensible default here
+    /// instead of silently inheriting that one.</summary>
+    public VmConfig CreateDraft() => new() { Kind = Id, MemoryMB = 512 };
+
+    public VmState GetVmState(string vmId) => GetState(vmId) switch
+    {
+        RiscvEmuRunState.Running => VmState.Running,
+        RiscvEmuRunState.Stopping => VmState.Stopping,
+        _ => VmState.Stopped,
+    };
+
+    public Task<string> StartAsync(VmConfig vm, AppSettings settings) =>
+        Task.FromResult(Start(vm, settings.RiscvEmuDir));
+
+    public Task<ShutdownResult> ShutdownAsync(VmConfig vm, AppSettings settings) =>
+        ShutdownGracefullyAsync(vm, TimeSpan.FromSeconds(Math.Max(1, settings.RiscvShutdownTimeoutSeconds)));
+
+    /// <summary>No QMP-equivalent control channel exists for this engine -
+    /// always null, regardless of run state.</summary>
+    public Task<string?> GetGuestDetailAsync(VmConfig vm) => Task.FromResult<string?>(null);
+
+    /// <summary>Always Stream while running - riscv-emu's guest UART is
+    /// the only display this engine has ever had.</summary>
+    public (ConsoleAvailability kind, string? detail) GetConsoleAvailability(VmConfig vm) =>
+        IsRunning(vm.Id) ? (ConsoleAvailability.Stream, null) : (ConsoleAvailability.NotRunning, null);
+
+    public VmHardwareDescription GetHardwareDescription(VmConfig vm)
+    {
+        var disk = string.IsNullOrWhiteSpace(vm.DiskPath) ? "None" : $"{vm.DiskPath} (virtio-blk)";
+        var network = vm.NetworkMode == "user" ? "virtio-net (user-mode NAT)" : "None";
+        return new VmHardwareDescription(
+            EngineDisplayName: DisplayName,
+            Architecture: "riscv64",
+            CpuDescription: "1 hart (fixed - no SMP yet)",
+            MemoryDescription: $"{vm.MemoryMB} MB",
+            DiskDescription: disk,
+            NetworkDescription: network,
+            ConsoleDescription: "Serial (UART)",
+            AcceleratorDescription: "Interpreter (this project's own CPU emulation)",
+            SupportsGuestDetail: false,
+            SupportsSpeedMetric: true);
+    }
 
     /// <summary>Raised on this manager's own thread-pool read loop, not the
     /// UI thread - subscribers must marshal back via Dispatcher themselves.

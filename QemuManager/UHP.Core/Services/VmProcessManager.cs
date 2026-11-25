@@ -53,11 +53,76 @@ public class RunningVm
 /// launches it, and talks to it over QMP (see <see cref="QmpClient"/>) -
 /// it does not emulate anything itself.
 /// </summary>
-public class VmProcessManager : IConsoleSource
+public class VmProcessManager : IEngine
 {
     private readonly Dictionary<string, RunningVm> _running = new();
 
     public event Action? StateChanged;
+
+    // --- IEngine (vision/VISION.md roadmap item 1) - additive: every
+    // member below is new surface for VmService to reach this engine
+    // through without branching on VmConfig.Kind itself. Nothing already
+    // public above changes signature or behavior. ---
+
+    public string Id => "Qemu";
+    public string DisplayName => "QEMU";
+    public bool CanHandle(VmConfig vm) => vm.Kind == Id;
+
+    public VmConfig CreateDraft() => new() { Kind = Id };
+
+    public VmState GetVmState(string vmId) => GetState(vmId) switch
+    {
+        VmRunState.Starting => VmState.Starting,
+        VmRunState.Running => VmState.Running,
+        VmRunState.Stopping => VmState.Stopping,
+        _ => VmState.Stopped,
+    };
+
+    public async Task<string> StartAsync(VmConfig vm, AppSettings settings) =>
+        await StartAsync(vm, settings.QemuDir);
+
+    public async Task<ShutdownResult> ShutdownAsync(VmConfig vm, AppSettings settings) =>
+        new ShutdownResult(await StopGracefullyAsync(vm), false);
+
+    /// <summary>riscv-emu has no QMP-equivalent control channel to ask -
+    /// this is the one engine-specific gap IEngine's own doc comment
+    /// calls out by name; here, QEMU's own answer.</summary>
+    public async Task<string?> GetGuestDetailAsync(VmConfig vm)
+    {
+        if (GetState(vm.Id) != VmRunState.Running) return null;
+        return await QueryGuestStatusAsync(vm);
+    }
+
+    public (ConsoleAvailability kind, string? detail) GetConsoleAvailability(VmConfig vm)
+    {
+        if (!IsRunning(vm.Id)) return (ConsoleAvailability.NotRunning, null);
+        if (vm.Display == "vnc") return (ConsoleAvailability.Vnc, GetVncEndpoint(vm.Id));
+        if (vm.Display == "console") return (ConsoleAvailability.Stream, null);
+        return (ConsoleAvailability.ExternalWindow, null);
+    }
+
+    public VmHardwareDescription GetHardwareDescription(VmConfig vm)
+    {
+        var disk = string.IsNullOrWhiteSpace(vm.DiskPath) ? "None" : vm.DiskPath;
+        var network = vm.NetworkMode == "user" ? "User-mode NAT" : "None";
+        var console = vm.Display switch
+        {
+            "console" => "Serial (text, in this app)",
+            "vnc" => "VNC (headless)",
+            _ => $"{vm.Display} window (QEMU's own)",
+        };
+        return new VmHardwareDescription(
+            EngineDisplayName: DisplayName,
+            Architecture: vm.Architecture,
+            CpuDescription: $"{vm.CpuCores} core{(vm.CpuCores == 1 ? "" : "s")}",
+            MemoryDescription: $"{vm.MemoryMB} MB",
+            DiskDescription: disk,
+            NetworkDescription: network,
+            ConsoleDescription: console,
+            AcceleratorDescription: vm.Accelerator,
+            SupportsGuestDetail: true,
+            SupportsSpeedMetric: false);
+    }
 
     /// <summary>Raised on a background thread, not the UI thread - only
     /// fires for a VM started with Display == "console" (see
