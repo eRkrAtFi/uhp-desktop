@@ -1,0 +1,172 @@
+<!doctype html>
+<!--
+  Phase 5's own real terminal (xterm.js, MIT - see xterm/LICENSE and
+  THIRD_PARTY.md), loaded by WebView2 via SetVirtualHostNameToFolderMapping
+  (see TerminalControl.xaml.cs) rather than a raw file:// path. Every
+  script/stylesheet below is a LOCAL file under this same folder - no CDN
+  reference anywhere, so this works with no network access at all, same
+  as every other engine in this app.
+
+  Message protocol with the C# side (TerminalControl.xaml.cs), all via
+  window.chrome.webview's own postMessage - WebView2 delivers a plain
+  object both ways (no JSON.stringify/parse needed on either end):
+    C# -> JS: {type:"output", data:"<base64>"}  - append guest bytes
+              {type:"stopped"}                   - show the "VM stopped" banner
+              {type:"clear"}                      - clear the scrollback
+    JS -> C#: {type:"ready"}                      - xterm is initialized, safe to seed/stream now
+              {type:"input", data:"<string>"}     - what xterm's own onData produced
+
+  Output bytes are decoded as UTF-8 by xterm.js ITSELF (term.write accepts
+  a Uint8Array directly, with its own internal UTF-8 decoder) rather than
+  this page doing its own TextDecoder pass per chunk - the guest's own
+  byte stream can split a single multi-byte UTF-8 character across two
+  separate output events, which a naive per-chunk decode would mangle;
+  xterm's own decoder carries partial-sequence state across write() calls
+  correctly, the same way a real terminal's PTY-reading code would.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="xterm/xterm.css">
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #0c0c0c; overflow: hidden; }
+  #terminal { height: 100%; width: 100%; }
+  #stopped-banner {
+    display: none;
+    position: absolute; left: 0; right: 0; bottom: 0;
+    background: #7a2e2e; color: #f1f1f1;
+    font: 12px "Segoe UI", sans-serif;
+    padding: 6px 10px;
+    z-index: 10;
+  }
+</style>
+</head>
+<body>
+<div id="terminal"></div>
+<div id="stopped-banner">VM stopped - output above is the last the guest sent.</div>
+<script src="xterm/xterm.js"></script>
+<script src="xterm/addon-fit.js"></script>
+<script>
+(function () {
+  const term = new Terminal({
+    cursorBlink: true,
+    scrollback: 10000,
+    fontFamily: "Consolas, monospace",
+    fontSize: 13,
+    theme: { background: "#0c0c0c", foreground: "#d0d0d0" },
+    // This control is read-only (no cursor/input) when used as the detail
+    // page's own console preview - set via one query-string flag so the
+    // same terminal.html serves both (see TerminalControl's own remarks).
+    disableStdin: new URLSearchParams(location.search).get("readonly") === "1",
+  });
+  const fitAddon = new FitAddon.FitAddon();
+  term.loadAddon(fitAddon);
+  term.open(document.getElementById("terminal"));
+  fitAddon.fit();
+
+  window.addEventListener("resize", () => fitAddon.fit());
+  // WebView2 does not always fire a window 'resize' event on its own
+  // control resizing the way a real browser window would - ResizeObserver
+  // on the terminal's own host div catches that case too.
+  new ResizeObserver(() => fitAddon.fit()).observe(document.getElementById("terminal"));
+
+  // Keystrokes -> C# -> guest. xterm's own onData already encodes
+  // everything a real terminal would (Ctrl+C -> \x03, Tab -> \t, arrows
+  // -> ESC [ A/B/C/D, pasted text -> itself, verbatim) with no Enter
+  // needed to "submit" anything - sent as-is, one message per onData
+  // firing, not buffered into a line first.
+  //
+  // One exception: xterm's own Enter key produces "\r" (standard - a real
+  // terminal's physical Enter key does the same, relying on the remote
+  // tty's own ICRNL to turn it into a line ending). Both this app's guest
+  // consoles are a raw virtual UART with no such tty layer in between -
+  // confirmed already, the hard way, before Phase 5 existed (see
+  // QemuManager/README.md's own "Two real bugs" section, and
+  // RiscvEmuProcessManager.ShutdownAsync's explicit "+ \"\\n\"" - every
+  // other hand-rolled sender in this codebase already had to work around
+  // exactly this). Translating here keeps that one, already-established
+  // behavior instead of quietly losing it to xterm's own default - a
+  // pasted block's own "\r\n" line endings collapse to a single "\n" too,
+  // rather than doubling every line into a blank one in between.
+  term.onData((data) => {
+    const translated = data.replace(/\r\n|\r/g, "\n");
+    window.chrome.webview.postMessage({ type: "input", data: translated });
+  });
+
+  // Ctrl+C/Ctrl+Shift+C with a selection means copy, the same overload a
+  // real terminal gives that key combination - intercepted here, before
+  // xterm's own default handling (which would otherwise always send
+  // \x03), via attachCustomKeyEventHandler: returning false suppresses
+  // xterm's own handling of this keydown entirely (no \x03 sent),
+  // returning true lets it proceed normally.
+  term.attachCustomKeyEventHandler((e) => {
+    if (e.type !== "keydown") return true;
+    const ctrl = e.ctrlKey;
+    const shift = e.shiftKey;
+    if (ctrl && (e.key === "c" || e.key === "C")) {
+      const selection = term.getSelection();
+      if (shift) {
+        // Ctrl+Shift+C always means copy, selection or not - the
+        // explicit "I mean copy" shortcut a real terminal offers
+        // precisely because plain Ctrl+C is overloaded with "send
+        // interrupt" there too.
+        if (selection) navigator.clipboard.writeText(selection);
+        return false;
+      }
+      if (selection) {
+        navigator.clipboard.writeText(selection);
+        return false; // copy, not an interrupt - there was something selected
+      }
+      return true; // no selection - let xterm send \x03 as normal
+    }
+    // Ctrl+V - xterm has no built-in binding for this at all (confirmed
+    // directly: left unhandled, it falls through to xterm's own default
+    // Ctrl+<letter> key mapping instead, sending the guest a literal 0x16
+    // control byte - visible there as a bare "^V" echo, not a paste).
+    // term.paste() feeds clipboard text through the exact same path a
+    // real OS-level paste event would (xterm's own newline/bracketed-
+    // paste handling included), matching every other application's own
+    // paste shortcut instead of requiring a terminal-specific one.
+    if (ctrl && !shift && (e.key === "v" || e.key === "V")) {
+      navigator.clipboard.readText().then((text) => term.paste(text));
+      return false;
+    }
+    return true;
+  });
+
+  // Right-click: copies a selection if there is one (matching Ctrl+C's
+  // own overload), otherwise pastes - the same convention real terminals
+  // (PuTTY, most Linux terminal emulators) already use right-click for,
+  // instead of showing a context menu neither this control nor its host
+  // window has any other use for.
+  document.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    const selection = term.getSelection();
+    if (selection) navigator.clipboard.writeText(selection);
+    else navigator.clipboard.readText().then((text) => term.paste(text));
+  });
+
+  function base64ToBytes(b64) {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+  }
+
+  window.chrome.webview.addEventListener("message", (event) => {
+    const msg = event.data;
+    if (msg.type === "output") {
+      term.write(base64ToBytes(msg.data));
+    } else if (msg.type === "stopped") {
+      document.getElementById("stopped-banner").style.display = "block";
+    } else if (msg.type === "clear") {
+      term.clear();
+      document.getElementById("stopped-banner").style.display = "none";
+    }
+  });
+
+  window.chrome.webview.postMessage({ type: "ready" });
+})();
+</script>
+</body>
+</html>

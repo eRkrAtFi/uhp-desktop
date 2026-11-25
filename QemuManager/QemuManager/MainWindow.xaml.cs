@@ -95,6 +95,13 @@ public partial class MainWindow : Window
         CheckEngineDirs();
         RefreshToolbarState();
         RefreshRecentTasks();
+
+        // Fire-and-forget, not awaited: WebView2's own async setup must
+        // not block this constructor (ShowDialog/Show need to return
+        // promptly) - Attach itself is always safe to call even before
+        // this finishes (see TerminalControl's own remarks), so nothing
+        // downstream actually depends on this having completed yet.
+        _ = ConsolePreviewTerminal.InitializeAsync();
     }
 
     private void LoadVms()
@@ -450,15 +457,13 @@ public partial class MainWindow : Window
         item.Mips = stats.Mips;
         item.Instructions = stats.Instructions;
 
-        // Live updates for the detail page's own Performance graph/
-        // Console preview, but only while it is actually showing this
-        // specific VM - redrawing a graph nobody can see on every ~2s
-        // tick for every VM would just be wasted work.
-        if (vmId == _detailVmId)
-        {
-            RedrawCpuHistory(vmId);
-            RefreshConsolePreview(vmId);
-        }
+        // Live update for the detail page's own Performance graph, but
+        // only while it is actually showing this specific VM - redrawing
+        // a graph nobody can see on every ~2s tick for every VM would
+        // just be wasted work. The console preview needs no equivalent
+        // call here - ConsolePreviewTerminal streams live on its own via
+        // OutputReceived once Attach wires it, independent of this timer.
+        if (vmId == _detailVmId) RedrawCpuHistory(vmId);
     }
 
     // Which VM (if any) the detail page is currently showing - set by
@@ -515,12 +520,6 @@ public partial class MainWindow : Window
     private void CpuHistoryCanvas_SizeChanged(object sender, SizeChangedEventArgs e)
     {
         if (_detailVmId != null) RedrawCpuHistory(_detailVmId);
-    }
-
-    private void RefreshConsolePreview(string vmId)
-    {
-        var preview = _vmService.GetConsolePreview(vmId, 15);
-        ConsolePreviewText.Text = string.IsNullOrEmpty(preview) ? "(no output yet)" : preview;
     }
 
     /// <summary>Opens the full console for whichever VM the detail page
@@ -588,19 +587,28 @@ public partial class MainWindow : Window
         // actually showing.
         VmDetailPage.Visibility = selectedVm != null ? Visibility.Visible : Visibility.Collapsed;
         _detailVmId = selectedVm?.Config.Id;
+        // Always detached first - leaving a VM's detail page (or
+        // switching to a different VM) must stop that VM's own
+        // OutputReceived subscription, not leave ConsolePreviewTerminal
+        // silently still wired to whatever it last showed.
+        ConsolePreviewTerminal.Detach();
         if (selectedVm != null)
         {
             VmDetailPage.DataContext = selectedVm;
             VmList.SelectedItem = selectedVm;
             // An immediate draw, so switching to an already-running VM's
-            // detail page shows its graph/console preview right away
-            // rather than waiting for the next ~2s StatsReceived tick -
-            // best-effort only (CpuHistoryCanvas.ActualWidth can still be
-            // 0 here if this is the very first time VmDetailPage has ever
-            // been laid out; CpuHistoryCanvas_SizeChanged below covers
-            // that case, and the next stats tick covers everything else).
+            // detail page shows its graph right away rather than waiting
+            // for the next ~2s StatsReceived tick - best-effort only
+            // (CpuHistoryCanvas.ActualWidth can still be 0 here if this is
+            // the very first time VmDetailPage has ever been laid out;
+            // CpuHistoryCanvas_SizeChanged below covers that case, and the
+            // next stats tick covers everything else). The console
+            // preview needs no equivalent "redraw now" call - Attach
+            // itself seeds it from GetConsoleBuffer immediately, then
+            // OutputReceived keeps it live on its own, not tied to the
+            // ~2s stats cadence at all.
             RedrawCpuHistory(selectedVm.Config.Id);
-            RefreshConsolePreview(selectedVm.Config.Id);
+            ConsolePreviewTerminal.Attach(_vmService, selectedVm.Config.Id, _vmService.GetConsoleBuffer(selectedVm.Config.Id));
         }
         HostPage.Visibility = tag == "Host" ? Visibility.Visible : Visibility.Collapsed;
         EnginesPage.Visibility = tag == "Engines" ? Visibility.Visible : Visibility.Collapsed;

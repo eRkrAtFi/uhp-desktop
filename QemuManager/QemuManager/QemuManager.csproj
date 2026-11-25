@@ -139,4 +139,21 @@
     <Resource Include="Assets\uhp.ico" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4370.26" />
+  </ItemGroup>
+
+  <!-- Phase 5's own terminal: a real HTML page (Assets\terminal.html) and
+       xterm.js itself (Assets\xterm\ - MIT, see THIRD_PARTY.md), loaded by
+       WebView2 via SetVirtualHostNameToFolderMapping, not pack:// - these
+       need to exist as plain files next to the built .exe for that, not be
+       embedded as WPF resources the way Assets\uhp.ico is above. No CDN
+       reference anywhere in terminal.html itself - every script/stylesheet
+       it loads is one of these same local files, so the app works with no
+       network access at all, same as every other engine here. -->
+  <ItemGroup>
+    <None Include="Assets\terminal.html" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Assets\xterm\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

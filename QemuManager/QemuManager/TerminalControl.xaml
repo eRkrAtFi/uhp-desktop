@@ -1,0 +1,17 @@
+<UserControl x:Class="QemuManager.TerminalControl"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf">
+    <Grid Background="#0C0C0C">
+        <wv2:WebView2 x:Name="Webview" DefaultBackgroundColor="#FF0C0C0C"/>
+        <!-- Shown only if WebView2's own runtime is missing/fails to
+             initialize (see InitializeAsync's own try/catch) - this app's
+             stated Requirements already lists Windows 10/11, which ships
+             the WebView2 Runtime by default since 2022, so this is a
+             fallback for an unusual/locked-down machine, not the expected
+             path. -->
+        <TextBlock x:Name="UnavailableText" Visibility="Collapsed" TextWrapping="Wrap"
+                   Foreground="{StaticResource ErrorText}" FontSize="13" Margin="16"
+                   VerticalAlignment="Center" HorizontalAlignment="Center"/>
+    </Grid>
+</UserControl>

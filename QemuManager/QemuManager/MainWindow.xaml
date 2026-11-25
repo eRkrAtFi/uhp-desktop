@@ -1,6 +1,7 @@
 <Window x:Class="QemuManager.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:QemuManager"
         Title="UHP Desktop" Height="700" Width="1200" MinHeight="480" MinWidth="860"
         Background="{StaticResource WindowBg}">
     <DockPanel>
@@ -487,17 +488,23 @@
                                     </Grid>
                                 </Border>
 
-                                <!-- Last ~15 lines, continuously captured in Core regardless of
-                                     whether a ConsoleWindow is open (see IVmService.GetConsoleBuffer's
-                                     own remarks) - so a VM's boot log is still here to read even if
-                                     nobody opened the console while it happened. Clicking opens the
-                                     real thing. -->
+                                <!-- Phase 5: the same TerminalControl (xterm.js) ConsoleWindow
+                                     uses, read-only here (see TerminalControl.ReadOnly) - a live
+                                     stream still, continuously fed in Core regardless of whether a
+                                     ConsoleWindow is also open (see IVmService.GetConsoleBuffer's
+                                     own remarks), so a VM's boot log is still here to read even if
+                                     nobody opened the console while it happened. Not clickable
+                                     itself to open the full console any more - WebView2 is a real
+                                     native child window (not a plain WPF visual), which always
+                                     renders on top of and can intercept input ahead of any WPF
+                                     sibling meant to catch a click "through" it; the text link below
+                                     is a reliable, airspace-free way to do the same thing instead. -->
                                 <TextBlock Text="Console" FontSize="16" FontWeight="Bold" Margin="0,0,0,8"/>
-                                <Border Background="#0C0C0C" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" Padding="12" Cursor="Hand"
-                                        MouseLeftButtonUp="ConsolePreview_Click" ToolTip="Click to open the full console">
-                                    <TextBlock x:Name="ConsolePreviewText" FontFamily="Consolas" FontSize="11.5" Foreground="#D0D0D0"
-                                               TextWrapping="NoWrap" Text="(no output yet)"/>
+                                <Border Background="#0C0C0C" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" Height="220">
+                                    <local:TerminalControl x:Name="ConsolePreviewTerminal" ReadOnly="True"/>
                                 </Border>
+                                <TextBlock Text="Open the full console" Foreground="{StaticResource Accent}" Cursor="Hand"
+                                           MouseLeftButtonUp="ConsolePreview_Click" Margin="0,6,0,0" FontSize="11.5"/>
                             </StackPanel>
                         </ScrollViewer>
                     </DockPanel>
