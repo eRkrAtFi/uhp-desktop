@@ -546,17 +546,62 @@
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="2*"/>
                             <ColumnDefinition Width="1.4*"/>
-                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="0.9*"/>
+                            <ColumnDefinition Width="0.9*"/>
                             <ColumnDefinition Width="1.6*"/>
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="Task" FontSize="10.5" FontWeight="Bold" Foreground="{StaticResource TextDim}" Padding="14,4"/>
                         <TextBlock Grid.Column="1" Text="Target" FontSize="10.5" FontWeight="Bold" Foreground="{StaticResource TextDim}" Padding="0,4"/>
                         <TextBlock Grid.Column="2" Text="Started" FontSize="10.5" FontWeight="Bold" Foreground="{StaticResource TextDim}" Padding="0,4"/>
-                        <TextBlock Grid.Column="3" Text="Result" FontSize="10.5" FontWeight="Bold" Foreground="{StaticResource TextDim}" Padding="0,4"/>
+                        <TextBlock Grid.Column="3" Text="Completed" FontSize="10.5" FontWeight="Bold" Foreground="{StaticResource TextDim}" Padding="0,4"/>
+                        <TextBlock Grid.Column="4" Text="Result" FontSize="10.5" FontWeight="Bold" Foreground="{StaticResource TextDim}" Padding="0,4"/>
                     </Grid>
+                    <!-- Phase 4: a real Task/Target/Started/Completed/Result
+                         row per item (MainWindow.xaml.cs's RefreshRecentTasks
+                         binds this straight to VmService.GetRecentTasks, a
+                         plain List<TaskRecord>) - not the single combined
+                         line this used to be. Result's own color flags
+                         Running (still in progress - Accent, matching the
+                         same brush the rest of the app uses for "this is
+                         live/in-flight") and Failed (ErrorText, same brush
+                         Settings/VmEditWindow's own validation text already
+                         uses for an error) - Succeeded is just the default
+                         foreground, nothing needs to draw attention to it. -->
                     <ListBox x:Name="RecentTasksList" Background="Transparent" BorderThickness="0"
                              Foreground="#F1F1F1" FontSize="11.5" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                             AutomationProperties.Name="Recent tasks"/>
+                             AutomationProperties.Name="Recent tasks">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="2*"/>
+                                        <ColumnDefinition Width="1.4*"/>
+                                        <ColumnDefinition Width="0.9*"/>
+                                        <ColumnDefinition Width="0.9*"/>
+                                        <ColumnDefinition Width="1.6*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{Binding Name}" Padding="14,3" TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock Grid.Column="1" Text="{Binding Target}" Padding="0,3" TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock Grid.Column="2" Text="{Binding Started, StringFormat='HH:mm:ss'}" Padding="0,3"/>
+                                    <TextBlock Grid.Column="3" Text="{Binding Completed, StringFormat='HH:mm:ss'}" Padding="0,3"/>
+                                    <TextBlock Grid.Column="4" Text="{Binding Result}" Padding="0,3" TextTrimming="CharacterEllipsis">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Status}" Value="Running">
+                                                        <Setter Property="Foreground" Value="{StaticResource Accent}"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding Status}" Value="Failed">
+                                                        <Setter Property="Foreground" Value="{StaticResource ErrorText}"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
                 </DockPanel>
             </Border>
         </Grid>

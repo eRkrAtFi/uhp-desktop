@@ -675,6 +675,107 @@ Console.WriteLine("\n--- VmService facade (Core architecture refactor) ---");
     }
 }
 
+Console.WriteLine("\n--- Recent Tasks: TaskHistoryService itself (begin/complete lifecycle, persistence, capacity cap) ---");
+{
+    // TaskHistoryService directly, not through IVmService - IVmService
+    // only exposes RecordTask/GetRecentTasks/TasksChanged (the one-shot
+    // surface a UI caller actually needs); BeginTask/CompleteTask are
+    // StartAsync/ShutdownAsync's own internal plumbing, tested here
+    // against the real class responsible rather than widening IVmService
+    // just for this test. QEMUMANAGER_DATA_DIR is fixed for this whole
+    // process (see the top of this file), so every instance below reads/
+    // writes the same tasks.json - that sharing is itself what the
+    // "persists across a restart" check further down relies on.
+    ITaskHistory history = new TaskHistoryService();
+
+    var changedFired = false;
+    history.Changed += () => changedFired = true;
+
+    // Begin/Complete lifecycle - a task with a real "in progress" phase,
+    // same shape StartAsync/ShutdownAsync already use internally.
+    var taskId = history.BeginTask("Test Task", "selftest-target");
+    var running = history.GetRecent().First();
+    Console.WriteLine($"BeginTask: Changed fired: {changedFired}, Status == Running: {running.Status == "Running"}, Completed == null: {running.Completed == null}, Result == \"Running...\" (what a row still in progress shows): {running.Result == "Running..."}");
+    await Task.Delay(50); // so Completed > Started is actually observable below, not merely non-null
+    history.CompleteTask(taskId, success: true, "Test completed OK.");
+    var completedRecord = history.GetRecent().First(r => r.Id == taskId);
+    Console.WriteLine($"CompleteTask: Status == Succeeded: {completedRecord.Status == "Succeeded"}, Completed != null: {completedRecord.Completed != null}, Completed >= Started: {completedRecord.Completed >= completedRecord.Started}, Result == \"Test completed OK.\": {completedRecord.Result == "Test completed OK."}");
+
+    var failTaskId = history.BeginTask("Test Task", "selftest-target-2");
+    history.CompleteTask(failTaskId, success: false, "Test failed: a specific reason.");
+    var failedRecord = history.GetRecent().First(r => r.Id == failTaskId);
+    Console.WriteLine($"CompleteTask (failure path): Status == Failed: {failedRecord.Status == "Failed"}, Result keeps the real error text rather than a generic \"Failed\": {failedRecord.Result == "Test failed: a specific reason."}");
+
+    // Persistence across a simulated restart - a brand new instance, no
+    // shared in-memory state with history above, only the same tasks.json
+    // on disk.
+    ITaskHistory restartedHistory = new TaskHistoryService();
+    var afterRestart = restartedHistory.GetRecent();
+    Console.WriteLine($"Persists across a new instance (simulated app restart): contains the just-completed task: {afterRestart.Any(r => r.Id == taskId && r.Status == "Succeeded")}");
+
+    // Capacity cap - 200 records max regardless of how many were recorded
+    // or how many a caller asks for, newest-first, oldest trimmed first.
+    for (var i = 0; i < 210; i++)
+        history.RecordInstant("Capacity test", $"item-{i}", true, "ok");
+    var capped = history.GetRecent(500); // deliberately asks for more than the cap
+    Console.WriteLine($"GetRecent never exceeds 200 even when more are asked for: {capped.Count} (expected: 200)");
+    Console.WriteLine($"Newest-first order preserved (the very last capacity-test item recorded is first): {capped[0].Target == "item-209"}");
+}
+
+Console.WriteLine("\n--- Recent Tasks: VmService.RecordTask (the IVmService facade's own one-shot surface) ---");
+{
+    IVmService facadeHistoryService = new VmService();
+    var changedFired = false;
+    facadeHistoryService.TasksChanged += () => changedFired = true;
+
+    facadeHistoryService.RecordTask("Create Disk", "selftest-disk.qcow2", true, "Created selftest-disk.qcow2 (1 GiB, qcow2).");
+    var instantRecord = facadeHistoryService.GetRecentTasks().FirstOrDefault();
+    Console.WriteLine($"RecordTask: TasksChanged fired: {changedFired}");
+    Console.WriteLine($"  newest record is the one just added: {instantRecord?.Name == "Create Disk" && instantRecord.Target == "selftest-disk.qcow2"}");
+    Console.WriteLine($"  Status == Succeeded, Completed set, Started == Completed (one-shot, not a Begin/Complete pair): {instantRecord?.Status == "Succeeded" && instantRecord.Completed != null && instantRecord.Started == instantRecord.Completed}");
+}
+
+Console.WriteLine("\n--- Recent Tasks: a VM's process exiting on its own is recorded too (DetectUnexpectedStop) ---");
+{
+    var kernelPath = Path.Combine(riscvEmuDir, "boot", "KernelImage");
+    if (!RiscvEmuLocator.LooksLikeRiscvEmuDir(riscvEmuDir) || !File.Exists(kernelPath))
+    {
+        Console.WriteLine("riscv-emu not found - skipping.");
+    }
+    else
+    {
+        IVmService svc = new VmService();
+        // No InitrdPath, same as this file's own "never reaches a shell"
+        // VM elsewhere - nothing here needs a shell, only a real running
+        // OS process to kill from outside VmService's own API entirely
+        // (not ForceStop - that is the "expected" path, already covered
+        // above and by the idempotency-guard tests further down).
+        var stopTestVm = new VmConfig { Kind = "RiscvEmu", Name = "selftest-unexpected-stop", KernelPath = kernelPath };
+        var settings = new AppSettings { QemuDir = qemuDir, RiscvEmuDir = riscvEmuDir };
+        Console.WriteLine(await svc.StartAsync(stopTestVm, settings));
+        Console.WriteLine($"Running: {svc.IsRunning(stopTestVm)} (expected: True)");
+
+        var proc = System.Diagnostics.Process.GetProcessesByName("riscv-emu").FirstOrDefault();
+        Console.WriteLine($"Found the real OS process to kill from outside: {proc != null}");
+        if (proc != null)
+        {
+            proc.Kill();
+            proc.WaitForExit(5000);
+            // RiscvEmuProcessManager's own Process.Exited handler (wired
+            // with EnableRaisingEvents=true) is what notices this and
+            // fires StateChanged, which is what VmService's own
+            // DetectUnexpectedStop reacts to - not synchronous with
+            // Kill() returning, so give it a moment rather than asserting
+            // immediately.
+            for (var i = 0; i < 50 && svc.IsRunning(stopTestVm); i++) await Task.Delay(100);
+            var tasks = svc.GetRecentTasks();
+            var stopped = tasks.FirstOrDefault(t => t.Name == "VM stopped" && t.Target == stopTestVm.Name);
+            Console.WriteLine($"Recorded as \"VM stopped\" even though nothing called ForceStop/ShutdownAsync - this process was killed directly: {stopped != null}");
+            Console.WriteLine($"  Status == Succeeded, Result == \"Process exited.\": {stopped?.Status == "Succeeded" && stopped.Result == "Process exited."}");
+        }
+    }
+}
+
 Console.WriteLine("\n--- Idempotency guards (bug report: double-clicking Console/Power On/Shut Down/Force Stop) ---");
 // These two guards are what MainWindow.OpenConsoleWindow and
 // StartAsync/ShutdownAsync/ForceStop actually rely on to stay correct

@@ -44,6 +44,13 @@ public static class AppPaths
 
     public static string SettingsFile { get; } = Path.Combine(AppDataDir, "settings.json");
 
+    /// <summary>Recent Tasks' own persisted history (see TaskHistoryStore) -
+    /// one flat JSON array, not one file per record like VmStore's own
+    /// vms/*.json: this is a single ordered list with a fixed cap
+    /// (TaskHistoryService.MaxRecords), not a keyed collection something
+    /// else looks records up in by id.</summary>
+    public static string TasksFile { get; } = Path.Combine(AppDataDir, "tasks.json");
+
     public static void EnsureDirectories()
     {
         Directory.CreateDirectory(VmsDir);

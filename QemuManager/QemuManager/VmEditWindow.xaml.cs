@@ -13,6 +13,7 @@ public partial class VmEditWindow : Window
 {
     private readonly VmConfig _vm;
     private readonly string _qemuDir;
+    private readonly IVmService _vmService;
 
     /// <summary>Known architectures with no usable default QEMU machine
     /// type/firmware (see ARCHITECTURE_AUDIT.md's recommendation #3) - a
@@ -30,11 +31,12 @@ public partial class VmEditWindow : Window
             ["riscv32"] = ("virt", "RISC-V has no default machine type. 'virt' is QEMU's standard one for it."),
         };
 
-    public VmEditWindow(VmConfig vm, string qemuDir)
+    public VmEditWindow(VmConfig vm, string qemuDir, IVmService vmService)
     {
         InitializeComponent();
         _vm = vm;
         _qemuDir = qemuDir;
+        _vmService = vmService;
 
         PopulateArchitectures();
         LoadFromConfig();
@@ -114,7 +116,7 @@ public partial class VmEditWindow : Window
         var suggestedPath = Path.Combine(AppPaths.AppDataDir, "disks", suggestedName + ".qcow2");
         Directory.CreateDirectory(Path.GetDirectoryName(suggestedPath)!);
 
-        var dialog = new CreateDiskWindow(_qemuDir, suggestedPath) { Owner = this };
+        var dialog = new CreateDiskWindow(_qemuDir, suggestedPath, _vmService) { Owner = this };
         if (dialog.ShowDialog() == true) DiskBox.Text = dialog.CreatedPath;
     }
 

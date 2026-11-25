@@ -8,14 +8,16 @@ namespace QemuManager;
 public partial class CreateDiskWindow : Window
 {
     private readonly string _qemuDir;
+    private readonly IVmService _vmService;
 
     /// <summary>Path of the disk image created, set only after a successful Create.</summary>
     public string CreatedPath { get; private set; } = "";
 
-    public CreateDiskWindow(string qemuDir, string suggestedPath)
+    public CreateDiskWindow(string qemuDir, string suggestedPath, IVmService vmService)
     {
         InitializeComponent();
         _qemuDir = qemuDir;
+        _vmService = vmService;
         PathBox.Text = suggestedPath;
     }
 
@@ -49,7 +51,9 @@ public partial class CreateDiskWindow : Window
         var message = await DiskImageService.CreateQcow2Async(_qemuDir, path, sizeGB);
         CreateButton.IsEnabled = true;
 
-        if (message.StartsWith("Created"))
+        var success = message.StartsWith("Created");
+        _vmService.RecordTask("Create Disk", path, success, message);
+        if (success)
         {
             CreatedPath = path;
             DialogResult = true;

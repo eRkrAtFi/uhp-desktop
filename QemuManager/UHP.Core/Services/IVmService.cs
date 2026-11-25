@@ -139,6 +139,31 @@ public interface IVmService : IConsoleSource
     /// <summary>The last few lines of <see cref="GetConsoleBuffer"/>.</summary>
     string GetConsolePreview(string vmId, int lines = 15);
 
+    // --- Recent Tasks (Phase 4) - a real, persisted history of actions,
+    // not the old free-text line-per-action feed. StartAsync/ShutdownAsync/
+    // ForceStop already record their own task internally (begin on entry,
+    // complete once the result is known) - RecordTask is for the caller's
+    // own one-shot actions (Create/Edit/Delete VM, Create Disk) that have
+    // no meaningful "in progress" phase of their own, and for anything
+    // else worth a row (e.g. a blocked Edit/Delete because the VM is still
+    // running). A VM's process exiting on its own is recorded internally
+    // too (see VmService's own unexpected-stop detector) - no caller
+    // action needed for that one. ---
+
+    /// <summary>Most recent first, capped at 200 regardless of what is
+    /// asked for.</summary>
+    IReadOnlyList<Models.TaskRecord> GetRecentTasks(int count = 200);
+
+    /// <summary>Records a one-shot action with no "in progress" phase
+    /// worth showing - see this section's own remarks for which ones.</summary>
+    void RecordTask(string name, string target, bool success, string result);
+
+    /// <summary>Fires after any task is recorded or completed, including
+    /// StartAsync/ShutdownAsync/ForceStop's own internal recording and the
+    /// unexpected-stop detector - the UI's cue to re-read GetRecentTasks
+    /// and rebind, same as ITaskHistory.Changed (which this forwards).</summary>
+    event Action? TasksChanged;
+
     // --- Events ---
 
     /// <summary>Raised whenever any VM's run state changes, for either

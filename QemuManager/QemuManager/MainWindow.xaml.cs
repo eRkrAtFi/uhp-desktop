@@ -22,7 +22,6 @@ public partial class MainWindow : Window
     private readonly IVmService _vmService = new VmService();
     private AppSettings _settings = new();
     private readonly ObservableCollection<VmListItem> _items = new();
-    private readonly ObservableCollection<string> _recentTasks = new();
     private readonly Dictionary<string, ConsoleWindow> _consoleWindows = new();
 
     // A separate view over _items for the grid, so the search box's filter
@@ -40,7 +39,6 @@ public partial class MainWindow : Window
         _vmGridSource.Filter += VmGridFilter;
         VmList.ItemsSource = _vmGridSource.View;
         VirtualMachinesNode.ItemsSource = _items;
-        RecentTasksList.ItemsSource = _recentTasks;
         HostNameText.Text = Environment.MachineName;
         // Set here, not via IsSelected="True" in XAML: a TreeViewItem fires
         // SelectedItemChanged synchronously as soon as its IsSelected setter
@@ -67,21 +65,22 @@ public partial class MainWindow : Window
             {
                 var imported = AppPaths.ImportLegacyConfigs(AppContext.BaseDirectory,
                     Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData));
-                SetStatus($"Imported {imported} VM configuration(s) from %APPDATA%.");
+                _vmService.RecordTask("Import", "%APPDATA%", true, $"Imported {imported} VM configuration(s).");
             }
         }
 
         _settings = AppSettings.Load();
-        // Not the plain RefreshRunStates() the explicit Power On/Shut
-        // Down/Force Stop handlers call after they log their own result -
-        // this variant additionally logs an unprompted stop (closing a
-        // QEMU gtk/sdl window, a crash, or a graceful ACPI shutdown
-        // finally completing well after "Shut Down" already logged its
-        // own "request sent" message) to Recent Tasks, which otherwise
-        // went completely unreported. See its own remarks for why
-        // IsActionInProgress is what keeps an explicit stop from being
-        // logged twice.
-        _vmService.StateChanged += () => Dispatcher.Invoke(RefreshRunStatesFromExternalEvent);
+        // A VM's process exiting without this window's own Power On/Shut
+        // Down/Force Stop handlers having asked for it (closing a QEMU
+        // gtk/sdl window directly, a crash, or a graceful ACPI shutdown
+        // finally completing well after Shut Down's own task already
+        // completed) used to be detected and logged right here - moved
+        // into VmService itself (see its own DetectUnexpectedStop), since
+        // Recent Tasks is now "história v jadre", Core's own history, not
+        // something the WPF layer computes. This handler's only job now is
+        // refreshing the grid's own Running/Stopped state.
+        _vmService.StateChanged += () => Dispatcher.Invoke(RefreshRunStates);
+        _vmService.TasksChanged += () => Dispatcher.Invoke(RefreshRecentTasks);
         // Replaces the DispatcherTimer this window used to own and poll
         // GetSnapshot/QueryGuestStatusAsync from every 2 seconds - that
         // loop now lives in VmService itself (a plain, non-WPF Timer), and
@@ -95,6 +94,7 @@ public partial class MainWindow : Window
         LoadVms();
         CheckEngineDirs();
         RefreshToolbarState();
+        RefreshRecentTasks();
     }
 
     private void LoadVms()
@@ -203,14 +203,14 @@ public partial class MainWindow : Window
         // refactor removed.
         bool? result = kindDialog.SelectedKind == "RiscvEmu"
             ? new RiscvEmuEditWindow(vm) { Owner = this }.ShowDialog()
-            : new VmEditWindow(vm, _settings.QemuDir) { Owner = this }.ShowDialog();
+            : new VmEditWindow(vm, _settings.QemuDir, _vmService) { Owner = this }.ShowDialog();
 
         if (result == true)
         {
             _vmService.Save(vm);
             _items.Add(new VmListItem(vm, _vmService));
             RefreshSummary();
-            SetStatus($"Created VM '{vm.Name}'.");
+            _vmService.RecordTask("Create VM", vm.Name, true, $"Created VM '{vm.Name}'.");
         }
     }
 
@@ -218,17 +218,21 @@ public partial class MainWindow : Window
     {
         var item = SelectedItem;
         if (item == null) return;
-        if (_vmService.IsRunning(item.Config)) { SetStatus("Stop the VM before editing its configuration."); return; }
+        if (_vmService.IsRunning(item.Config))
+        {
+            _vmService.RecordTask("Edit VM", item.Config.Name, false, "Stop the VM before editing its configuration.");
+            return;
+        }
 
         bool? result = item.Config.Kind == "RiscvEmu"
             ? new RiscvEmuEditWindow(item.Config) { Owner = this }.ShowDialog()
-            : new VmEditWindow(item.Config, _settings.QemuDir) { Owner = this }.ShowDialog();
+            : new VmEditWindow(item.Config, _settings.QemuDir, _vmService) { Owner = this }.ShowDialog();
 
         if (result == true)
         {
             _vmService.Save(item.Config);
             item.RefreshFromConfig();
-            SetStatus($"Saved VM '{item.Config.Name}'.");
+            _vmService.RecordTask("Edit VM", item.Config.Name, true, $"Saved VM '{item.Config.Name}'.");
         }
     }
 
@@ -236,7 +240,11 @@ public partial class MainWindow : Window
     {
         var item = SelectedItem;
         if (item == null) return;
-        if (_vmService.IsRunning(item.Config)) { SetStatus("Stop the VM before deleting it."); return; }
+        if (_vmService.IsRunning(item.Config))
+        {
+            _vmService.RecordTask("Delete VM", item.Config.Name, false, "Stop the VM before deleting it.");
+            return;
+        }
 
         var result = MessageBox.Show(this, $"Delete '{item.Config.Name}'? This removes its configuration, not any disk image.",
             "Delete VM", MessageBoxButton.YesNo, MessageBoxImage.Warning);
@@ -245,7 +253,7 @@ public partial class MainWindow : Window
         _vmService.Delete(item.Config);
         _items.Remove(item);
         RefreshSummary();
-        SetStatus($"Deleted VM '{item.Config.Name}'.");
+        _vmService.RecordTask("Delete VM", item.Config.Name, true, $"Deleted VM '{item.Config.Name}'.");
     }
 
     private async void StartButton_Click(object sender, RoutedEventArgs e)
@@ -253,18 +261,19 @@ public partial class MainWindow : Window
         var item = SelectedItem;
         if (item == null) return;
 
-        SetStatus($"Starting '{item.Config.Name}'...");
         // StartAsync claims VmService's own per-VM "action in progress"
         // guard synchronously, before its first await - by the time this
         // line returns a Task to await, IsActionInProgress is already
         // true, so refreshing the toolbar right here (not only after the
         // await completes) is what actually disables the button for the
         // duration of the call, closing the double-click race a disabled-
-        // only-after-the-fact button would not.
+        // only-after-the-fact button would not. StartAsync already records
+        // its own "Power On" task (Running the instant it begins, via
+        // TasksChanged - no separate "Starting..." line needed here any
+        // more) and completes it with the real result below.
         var startTask = _vmService.StartAsync(item.Config, _settings);
         RefreshToolbarState();
-        var message = await startTask;
-        SetStatus($"{item.Config.Name}: {message}");
+        await startTask;
 
         // Only auto-opens when the engine says this VM's console is a live
         // stream this app can render itself - never for QEMU's own gtk/sdl
@@ -283,7 +292,6 @@ public partial class MainWindow : Window
         var shutdownTask = _vmService.ShutdownAsync(item.Config, _settings);
         RefreshToolbarState(); // see StartButton_Click's own remarks
         var result = await shutdownTask;
-        SetStatus($"{item.Config.Name}: {result.Message}");
         RefreshRunStates();
 
         // Point 3: a timed-out graceful shutdown offers Force Stop - it
@@ -299,8 +307,7 @@ public partial class MainWindow : Window
                 "Shut Down timed out", MessageBoxButton.YesNo, MessageBoxImage.Warning);
             if (offerForceStop == MessageBoxResult.Yes)
             {
-                var forceMessage = _vmService.ForceStop(item.Config);
-                SetStatus($"{item.Config.Name}: {forceMessage}");
+                _vmService.ForceStop(item.Config);
                 RefreshRunStates();
             }
         }
@@ -315,8 +322,7 @@ public partial class MainWindow : Window
             "Force Stop", MessageBoxButton.YesNo, MessageBoxImage.Warning);
         if (result != MessageBoxResult.Yes) return;
 
-        var message = _vmService.ForceStop(item.Config);
-        SetStatus($"{item.Config.Name}: {message}");
+        _vmService.ForceStop(item.Config);
         RefreshRunStates();
     }
 
@@ -334,12 +340,12 @@ public partial class MainWindow : Window
                 OpenConsoleWindow(item.Config);
                 break;
             case ConsoleAvailability.Vnc:
-                SetStatus(detail != null
-                    ? $"{item.Config.Name}: VNC at {detail} - connect with any VNC client."
-                    : $"{item.Config.Name}: VNC endpoint not available.");
+                _vmService.RecordTask("Console", item.Config.Name, detail != null,
+                    detail != null ? $"VNC at {detail} - connect with any VNC client." : "VNC endpoint not available.");
                 break;
             case ConsoleAvailability.ExternalWindow:
-                SetStatus("This VM's Display is gtk/sdl - it shows its own window, not a console here. Edit the VM and set Display to 'console' to change that.");
+                _vmService.RecordTask("Console", item.Config.Name, false,
+                    "Display is gtk/sdl - it shows its own window, not a console here. Edit the VM and set Display to 'console' to change that.");
                 break;
         }
     }
@@ -391,30 +397,6 @@ public partial class MainWindow : Window
         }
         RefreshSummary();
         RefreshToolbarState();
-    }
-
-    /// <summary>The StateChanged event's own subscriber - fires for every
-    /// state transition, for either engine, regardless of cause. A
-    /// transition into Stopped while VmService.IsActionInProgress is
-    /// False for that VM did not come from this window's own Power On/
-    /// Shut Down/Force Stop handlers (every one of them holds that guard
-    /// for the duration of its own call and logs its own result before
-    /// calling the plain RefreshRunStates() above, not this method) - it
-    /// is the OS process actually exiting on its own: a QEMU gtk/sdl
-    /// window the user closed directly, a crash, or a graceful ACPI
-    /// shutdown (StopButton's own guard ends right after the request is
-    /// sent, long before the guest actually powers off) finally
-    /// completing. Previously none of that was ever reported anywhere.</summary>
-    private void RefreshRunStatesFromExternalEvent()
-    {
-        foreach (var item in _items)
-        {
-            var oldState = item.State;
-            var newState = _vmService.GetState(item.Config);
-            if (oldState != VmState.Stopped && newState == VmState.Stopped && !_vmService.IsActionInProgress(item.Config.Id))
-                SetStatus($"{item.Config.Name}: VM stopped (process exited).");
-        }
-        RefreshRunStates();
     }
 
     private void RefreshSummary()
@@ -551,14 +533,15 @@ public partial class MainWindow : Window
         OpenConsoleWindow(item.Config);
     }
 
-    // Phase 1 replaced the single-line status bar with a "Recent tasks"
-    // pane. This is still the same one-line-per-action feed every existing
-    // SetStatus call site already produces - not yet the Task/Target/
-    // Started/Result row schema Phase 4 is scoped to build, which needs
-    // each action to report its own start and end separately rather than
-    // one fire-and-forget string (the column header above the list is
-    // already in place for it - see MainWindow.xaml's RecentTasksColumnHeader).
-    private void SetStatus(string text) => _recentTasks.Insert(0, $"{DateTime.Now:HH:mm:ss}  {text}");
+    /// <summary>Phase 4: Recent Tasks is now VmService's own persisted
+    /// history (see ITaskHistory), not this window's free-text feed - this
+    /// just re-reads it and rebinds, on TasksChanged firing (any task
+    /// began, completed, or was recorded) and once at startup. A full
+    /// rebind rather than patching one row of an already-bound collection
+    /// in place: at most 200 rows, cheap enough that there is no real
+    /// reason to build the incremental-update machinery that would avoid
+    /// it.</summary>
+    private void RefreshRecentTasks() => RecentTasksList.ItemsSource = _vmService.GetRecentTasks();
 
     private void RecentTasksToggleButton_Click(object sender, RoutedEventArgs e)
     {

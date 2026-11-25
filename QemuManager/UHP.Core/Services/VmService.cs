@@ -51,6 +51,16 @@ public class VmService : IVmService, IDisposable
     private readonly HashSet<string> _busyVmIds = new();
     private readonly object _busyLock = new();
 
+    // Recent Tasks (Phase 4) - see ITaskHistory's own remarks. _lastKnownState
+    // is this service's own copy of "what did GetState(vm) last report",
+    // used only to detect a transition INTO Stopped nobody here asked for
+    // (see DetectUnexpectedStop) - deliberately separate from VmListItem's
+    // own State property (a WPF-layer concern this has no business
+    // depending on).
+    private readonly TaskHistoryService _history = new();
+    private readonly Dictionary<string, VmState> _lastKnownState = new();
+    private readonly object _lastKnownStateLock = new();
+
     // CPU history for the detail page's "last hour" graph (Phase 3) - kept
     // here, fed from the same PollStatsAsync tick StatsReceived already
     // uses, so it exists and keeps growing whether or not any window is
@@ -93,7 +103,44 @@ public class VmService : IVmService, IDisposable
         };
         _qemu.OutputReceived += AppendToConsoleBuffer;
         _riscv.OutputReceived += AppendToConsoleBuffer;
+        // Wired directly to each engine's own event, not through this
+        // class's own StateChanged property above - that property has no
+        // backing delegate of its own (its add/remove just forward to
+        // _qemu/_riscv directly), so there is nothing for this class
+        // itself to subscribe to there even though external callers
+        // (MainWindow) can.
+        _qemu.StateChanged += DetectUnexpectedStop;
+        _riscv.StateChanged += DetectUnexpectedStop;
         _statsTimer = new Timer(async _ => await PollStatsAsync(), null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+    }
+
+    /// <summary>Recent Tasks' own record of a VM's process exiting without
+    /// this app itself having asked it to - closing a QEMU gtk/sdl window
+    /// directly, a crash, or a graceful ACPI shutdown (StartAsync/
+    /// ShutdownAsync/ForceStop's own task-recording already ends the
+    /// moment its own call returns, long before the guest's ACPI request
+    /// actually finishes) completing well after the fact. Fires on every
+    /// StateChanged, for either engine - the event itself carries no vmId,
+    /// so every currently-known VM's own last-seen state has to be
+    /// compared, the same thing MainWindow's own RefreshRunStatesFromExternalEvent
+    /// already did before this moved here (Recent Tasks needing to be
+    /// "história v jadre" - Core's own history, not the WPF layer's).</summary>
+    private void DetectUnexpectedStop()
+    {
+        VmConfig[] snapshot;
+        lock (_configsLock) snapshot = _configs.ToArray();
+        foreach (var vm in snapshot)
+        {
+            var newState = GetState(vm);
+            VmState oldState;
+            lock (_lastKnownStateLock)
+            {
+                _lastKnownState.TryGetValue(vm.Id, out oldState); // default VmState.Stopped if never seen - a VM reattached already-Running at startup just records that as its first-known state, no false "it just stopped"
+                _lastKnownState[vm.Id] = newState;
+            }
+            if (oldState != VmState.Stopped && newState == VmState.Stopped && !IsActionInProgress(vm.Id))
+                _history.RecordInstant("VM stopped", vm.Name, success: true, "Process exited.");
+        }
     }
 
     private void AppendToConsoleBuffer(string vmId, byte[] data)
@@ -330,6 +377,7 @@ public class VmService : IVmService, IDisposable
         // could trigger - see IVmService's own remarks and
         // QemuManager.SelfTest's dedicated test for this.
         if (!TryBeginAction(vm.Id)) return "Another action is already in progress for this VM.";
+        var taskId = _history.BeginTask("Power On", vm.Name);
         try
         {
             // A fresh run's own boot log, not whatever was left over from
@@ -347,7 +395,13 @@ public class VmService : IVmService, IDisposable
             // never explicitly saved. The same dedup Save already does, so
             // starting an already-known VM twice is still a no-op here.
             lock (_configsLock) { if (!_configs.Any(c => c.Id == vm.Id)) _configs.Add(vm); }
-            return IsRiscv(vm) ? _riscv.Start(vm, settings.RiscvEmuDir) : await _qemu.StartAsync(vm, settings.QemuDir);
+            var message = IsRiscv(vm) ? _riscv.Start(vm, settings.RiscvEmuDir) : await _qemu.StartAsync(vm, settings.QemuDir);
+            // Success is read from the VM's own resulting state, not from
+            // parsing the message string - the actual source of truth for
+            // whether this worked, and the same check regardless of which
+            // engine's own wording produced the message.
+            _history.CompleteTask(taskId, IsRunning(vm), message);
+            return message;
         }
         finally { EndAction(vm.Id); }
     }
@@ -355,14 +409,27 @@ public class VmService : IVmService, IDisposable
     public async Task<ShutdownResult> ShutdownAsync(VmConfig vm, AppSettings settings)
     {
         if (!TryBeginAction(vm.Id)) return new ShutdownResult("Another action is already in progress for this VM.", false);
+        var taskId = _history.BeginTask("Shut Down", vm.Name);
         try
         {
+            ShutdownResult result;
             if (IsRiscv(vm))
             {
                 var timeout = TimeSpan.FromSeconds(Math.Max(1, settings.RiscvShutdownTimeoutSeconds));
-                return await _riscv.ShutdownGracefullyAsync(vm, timeout);
+                result = await _riscv.ShutdownGracefullyAsync(vm, timeout);
             }
-            return new ShutdownResult(await _qemu.StopGracefullyAsync(vm), false);
+            else
+            {
+                result = new ShutdownResult(await _qemu.StopGracefullyAsync(vm), false);
+            }
+            // TimedOut is the real success/failure signal here (see
+            // ShutdownResult's own remarks) - always false for QEMU, which
+            // only ever reports "the ACPI request was sent", not whether
+            // the guest actually powered off; that part, if/when it
+            // happens, is DetectUnexpectedStop's own "VM stopped" row, not
+            // this task completing late.
+            _history.CompleteTask(taskId, !result.TimedOut, result.Message);
+            return result;
         }
         finally { EndAction(vm.Id); }
     }
@@ -370,8 +437,28 @@ public class VmService : IVmService, IDisposable
     public string ForceStop(VmConfig vm)
     {
         if (!TryBeginAction(vm.Id)) return "Another action is already in progress for this VM.";
-        try { return IsRiscv(vm) ? _riscv.ForceStop(vm) : _qemu.ForceStop(vm); }
+        try
+        {
+            var message = IsRiscv(vm) ? _riscv.ForceStop(vm) : _qemu.ForceStop(vm);
+            // No BeginTask/CompleteTask pair - Force Stop is near-instant
+            // (Process.Kill, not an awaited guest-side negotiation), so
+            // RecordInstant's "started and completed at once" fits better
+            // than a Running row that would never actually be visible.
+            _history.RecordInstant("Force Stop", vm.Name, !IsRunning(vm), message);
+            return message;
+        }
         finally { EndAction(vm.Id); }
+    }
+
+    public IReadOnlyList<Models.TaskRecord> GetRecentTasks(int count = 200) => _history.GetRecent(count);
+
+    public void RecordTask(string name, string target, bool success, string result) =>
+        _history.RecordInstant(name, target, success, result);
+
+    public event Action? TasksChanged
+    {
+        add => _history.Changed += value;
+        remove => _history.Changed -= value;
     }
 
     // A VM ID belongs to exactly one engine's _running dictionary; the
