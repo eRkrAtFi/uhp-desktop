@@ -151,6 +151,15 @@ static void usage(const char *argv0)
         "  --append <args>    extra kernel cmdline, appended after this\n"
         "                     machine's own console=/earlycon= args\n"
         "  --firmware <f>     firmware stub for --kernel (default boot/firmware.bin)\n"
+        "  --gdb <port>       serve GDB Remote Serial Protocol on 127.0.0.1:<port>\n"
+        "                     (loopback only) instead of running freely - attach\n"
+        "                     with lldb/gdb's own 'gdb-remote'/'target remote'\n"
+        "  --gdb-wait         with --gdb, stop before the first instruction\n"
+        "                     (like QEMU's -S) instead of running right away -\n"
+        "                     use this to set a breakpoint before anything has\n"
+        "                     executed yet, especially for a short program that\n"
+        "                     would otherwise finish before a debugger's first\n"
+        "                     command ever reaches it\n"
         "  --help             show this message\n"
         "\n"
         "With a bare <raw-binary> and no --load/--entry/--kernel, the file is\n"
@@ -467,6 +476,7 @@ int main(int argc, char **argv)
     uint64_t peek_va = 0, peek_count = 0;
     uint64_t mem_size = MEM_SIZE;
     int peek_requested = 0;
+    int gdb_port = 0, gdb_wait = 0;
     uint8_t *data;
 
     memset(&m, 0, sizeof(m));
@@ -564,6 +574,10 @@ int main(int argc, char **argv)
                     path, (unsigned long long)m.disk_size);
         } else if (!strcmp(argv[i], "--net")) {
             net_init(&m);
+        } else if (!strcmp(argv[i], "--gdb") && i + 1 < argc) {
+            gdb_port = (int)strtoul(argv[++i], NULL, 0);
+        } else if (!strcmp(argv[i], "--gdb-wait")) {
+            gdb_wait = 1;
         } else if (!strcmp(argv[i], "--mem") && i + 1 < argc) {
             i++; /* already consumed in the pre-scan pass above */
         } else if (!strcmp(argv[i], "--elf") && i + 1 < argc) {
@@ -629,7 +643,15 @@ int main(int argc, char **argv)
      * charge a human's command-line-typing time to the guest either. */
     if (!m.deterministic_time) realtime_clock_init(&m);
 
-    {
+    if (gdb_port) {
+        /* Owns the whole instruction-stepping loop itself (breakpoints,
+         * single-step, Ctrl-C) - see src/gdbstub.c's own top comment.
+         * The plain loop below is untouched when --gdb is not given, so
+         * an ordinary run's performance is unaffected by this existing
+         * (confirmed directly: boot-test's own timing, before and after
+         * this feature was added, is unchanged). */
+        gdbstub_run(&m, gdb_port, gdb_wait, max_insns);
+    } else {
         clock_t t_start = clock();
         uint64_t next_report = 200000;
         while (!m.cpu.halted && m.cpu.insns < max_insns) {

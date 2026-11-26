@@ -59,6 +59,15 @@ jobs:
         run: make test-all
         shell: bash
 
+      # scripts/gdb-test.py itself skips (exit 0, not a failure) if
+      # lldb or qemu-system-riscv64 are not on PATH - choco's llvm
+      # package does bundle lldb.exe, but this does not depend on that
+      # staying true.
+      - name: riscv-emu GDB stub differential test (vs real QEMU, via lldb)
+        working-directory: riscv-emu
+        run: make gdb-test
+        shell: bash
+
       # boot-test/interactive-test/fs-compare all need a real riscv64
       # Linux kernel+initramfs via --kernel - a from-scratch, reproducible
       # Buildroot build (see riscv-emu/buildroot/ and

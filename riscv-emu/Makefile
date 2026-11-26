@@ -20,7 +20,7 @@ QEMU     ?= qemu-system-riscv64
 GUEST_FLAGS := --target=riscv64-unknown-elf -march=rv64im -mabi=lp64 -mno-relax \
                -nostdlib -static -Wl,-T,tests/link.ld
 
-SRC := src/cpu.c src/devices.c src/main.c src/net.c src/dtb.c
+SRC := src/cpu.c src/devices.c src/main.c src/net.c src/dtb.c src/gdbstub.c
 HDR := src/emu.h
 BIN := riscv-emu.exe
 # virtio-net's user-mode NAT backend (src/net.c): Winsock for the actual
@@ -94,6 +94,16 @@ baremetal-compare: $(BIN) examples/baremetal-hello/hello.elf
 	@./$(BIN) --deterministic-time --elf examples/baremetal-hello/hello.elf > build-baremetal-riscv-emu.out
 	@-$(QEMU) -M virt -bios none -kernel examples/baremetal-hello/hello.elf -nographic -no-reboot > build-baremetal-qemu.out 2>/dev/null
 	@diff -u build-baremetal-riscv-emu.out build-baremetal-qemu.out && echo "riscv-emu matches QEMU (bare-metal ELF)"
+
+# M3's own differential test: the same breakpoint-on-main/continue/
+# register-read scenario driven through lldb against riscv-emu's own
+# GDB stub and against real QEMU's - see scripts/gdb-test.py's own top
+# comment. Skips cleanly (exit 0) if lldb or qemu-system-riscv64 are not
+# on PATH, rather than failing the whole suite over a missing optional
+# tool - not folded into test-all for that reason (test-all's own
+# promise is "everything here failed or didn't" with no silent skips).
+gdb-test: $(BIN) examples/baremetal-hello/hello.elf
+	python3 scripts/gdb-test.py
 
 # Phase 6's virtio-blk differential test: unlike every other test here, it
 # is C, not assembly - a virtqueue's descriptor/avail/used ring layout is

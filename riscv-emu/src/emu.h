@@ -487,4 +487,12 @@ uint8_t *build_dtb(uint64_t mem_base, uint64_t mem_size,
                     int has_initrd, uint64_t initrd_start, uint64_t initrd_end,
                     const char *bootargs, uint64_t *out_len);
 
+/* --- GDB remote stub (src/gdbstub.c) - vision/VISION.md roadmap item 3,
+ * M3. Takes over the whole instruction-stepping loop for the lifetime of
+ * the session - see its own top comment. Only ever called from main.c
+ * when --gdb was given; the ordinary (non-gdb) loop in main.c is
+ * entirely separate code, so a normal run is unaffected by this file
+ * existing. */
+void gdbstub_run(Machine *m, int port, int wait_for_debugger, uint64_t max_insns);
+
 #endif /* RISCV_EMU_H */
