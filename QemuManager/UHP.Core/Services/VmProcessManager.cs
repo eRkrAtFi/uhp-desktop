@@ -85,13 +85,37 @@ public class VmProcessManager : IEngine
 
     public IReadOnlyList<string> ListArchitectures(AppSettings settings) => QemuLocator.ListArchitectures(settings.QemuDir);
 
+    /// <summary>Architectures QEMU ships with no default machine type at
+    /// all (qemu-system-* simply refuses to start with none given) and
+    /// the "virt" machine type is the usual choice for - what the old,
+    /// per-window VmEditWindow's own ArchHints dictionary used to offer
+    /// by hand before the schema-driven EnvironmentEditWindow replaced it
+    /// (see Platform.MachineType's own FieldDependency below, which is
+    /// what restores this behavior generically through the schema
+    /// instead).</summary>
+    private static readonly Dictionary<string, (string MachineType, string Hint)> ArchMachineTypeHints =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["aarch64"] = ("virt", "ARM64 has no default machine type - \"virt\" is QEMU's standard one. You'll also need a firmware image (e.g. an edk2 AAVMF \"QEMU_EFI.fd\" build) unless booting a kernel directly via Workload's own Kernel Image field."),
+            ["arm"] = ("virt", "32-bit ARM has no default machine type - \"virt\" is QEMU's standard one."),
+            ["riscv64"] = ("virt", "RISC-V has no default machine type - \"virt\" is QEMU's standard one. You'll also need OpenSBI firmware unless booting a kernel directly via Workload's own Kernel Image field."),
+            ["riscv32"] = ("virt", "RISC-V has no default machine type - \"virt\" is QEMU's standard one."),
+        };
+
     public IReadOnlyList<ConfigField> GetConfigSchema() => new List<ConfigField>
     {
         new() { Key = "Platform.Architecture", Label = "Architecture", Type = FieldType.Choice, Group = "Platform",
             Get = e => e.Platform.Architecture, Set = (e, v) => e.Platform.Architecture = (string)v!, Required = true },
         new() { Key = "Platform.MachineType", Label = "Machine type", Type = FieldType.Text, Group = "Platform",
             Get = e => e.Platform.MachineType, Set = (e, v) => e.Platform.MachineType = (string)v!,
-            Hint = "QEMU's -M/-machine value, e.g. \"virt\". Empty lets QEMU pick its own default - several architectures (aarch64/arm/riscv*) have none and need this set explicitly." },
+            Hint = "QEMU's -M/-machine value, e.g. \"virt\". Empty lets QEMU pick its own default - several architectures (aarch64/arm/riscv*) have none and need this set explicitly.",
+            DependsOn = new FieldDependency
+            {
+                OnKey = "Platform.Architecture",
+                SuggestedDefault = arch => ArchMachineTypeHints.TryGetValue(arch as string ?? "", out var h) ? h.MachineType : null,
+                IsRequired = arch => ArchMachineTypeHints.ContainsKey(arch as string ?? ""),
+                Hint = arch => ArchMachineTypeHints.TryGetValue(arch as string ?? "", out var h) ? h.Hint : null,
+            } },
         new() { Key = "Platform.MemoryMB", Label = "Memory (MB)", Type = FieldType.Int, Group = "Platform",
             Get = e => e.Platform.MemoryMB, Set = (e, v) => e.Platform.MemoryMB = (int)v!, Required = true,
             Validate = v => (int)v! >= 16 ? null : "Memory must be a number of MB, at least 16." },

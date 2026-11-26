@@ -62,4 +62,44 @@ public sealed class ConfigField
     /// positive number") - returns an error message, or null if the
     /// value (already converted to this field's own CLR type) is valid.</summary>
     public Func<object?, string?>? Validate { get; init; }
+
+    /// <summary>This field's own Required-ness, suggested default, and
+    /// hint can depend on another field's current value (e.g.
+    /// Platform.MachineType is required, and has a suggested default,
+    /// only for certain Platform.Architecture values) - see
+    /// <see cref="FieldDependency"/>. Null for a field with no such
+    /// dependency (most of them).</summary>
+    public FieldDependency? DependsOn { get; init; }
+}
+
+/// <summary>Ties one ConfigField's Required/default/hint to another
+/// field's current value, so that relationship lives in the schema
+/// itself (IEngine.GetConfigSchema) rather than as hand-written,
+/// per-window logic the schema-driven EnvironmentEditWindow cannot see -
+/// the whole point of a "configuration schema" per vision/VISION.md's
+/// roadmap item 1. Each function is called with the OTHER field's
+/// (OnKey's) current raw value, read live from whatever control is
+/// showing it - not a snapshot taken when the window opened.</summary>
+public sealed class FieldDependency
+{
+    /// <summary>The other field's own Key (e.g. "Platform.Architecture").</summary>
+    public required string OnKey { get; init; }
+
+    /// <summary>Given OnKey's current value, what this field's own
+    /// suggested default is - null means "no suggestion for this value."
+    /// The editor only ever uses this to OFFER a value into an empty
+    /// field (e.g. right after the user changes Architecture); it never
+    /// overwrites a value the user (or a loaded Environment) already
+    /// set.</summary>
+    public Func<object?, object?>? SuggestedDefault { get; init; }
+
+    /// <summary>Given OnKey's current value, is this field required right
+    /// now? Checked in addition to (not instead of) the field's own
+    /// static Required flag.</summary>
+    public Func<object?, bool>? IsRequired { get; init; }
+
+    /// <summary>Given OnKey's current value, an extra hint to show
+    /// instead of the field's own static Hint - null means "fall back to
+    /// the static Hint for this value."</summary>
+    public Func<object?, string?>? Hint { get; init; }
 }

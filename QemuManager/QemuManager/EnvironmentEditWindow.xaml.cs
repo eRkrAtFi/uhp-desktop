@@ -23,13 +23,34 @@ namespace QemuManager;
 /// schema without this class knowing which engine it is beyond asking
 /// IVmService for that engine's own GetConfigSchema/ListArchitectures/
 /// Capabilities - a third engine registered later needs no changes here.
+///
+/// A field whose ConfigField.DependsOn is set (e.g. Platform.MachineType
+/// depending on Platform.Architecture) reacts live to the field it
+/// depends on changing - see OnFieldChanged - instead of that
+/// relationship being hard-coded here per field the way the old
+/// VmEditWindow's own ArchHints dictionary was; a schema the editor has
+/// never seen before works the same way with no changes to this file.
 /// </summary>
 public partial class EnvironmentEditWindow : Window
 {
     private readonly EnvironmentConfig _env;
     private readonly IVmService _vmService;
     private readonly AppSettings _settings;
-    private readonly List<(ConfigField Field, Func<object?> Read)> _rows = new();
+
+    private sealed class FieldRow
+    {
+        public required ConfigField Field { get; init; }
+        public required Func<object?> Read { get; init; }
+        public required Action<object?> Write { get; init; }
+        public TextBlock? HintBlock { get; set; }
+    }
+
+    // Keyed by ConfigField.Key, not a list - DependsOn resolves the
+    // field it depends on by that same key, from whichever row is
+    // already built. A dependent field's schema entry must come after
+    // the field it depends on (true for every engine's schema today -
+    // Platform.Architecture is always listed before Platform.MachineType).
+    private readonly Dictionary<string, FieldRow> _rowsByKey = new();
 
     public EnvironmentEditWindow(EnvironmentConfig env, AppSettings settings, IVmService vmService)
     {
@@ -76,7 +97,7 @@ public partial class EnvironmentEditWindow : Window
         Grid.SetColumn(valueColumn, 1);
         grid.Children.Add(valueColumn);
 
-        Func<object?> read = field.Type switch
+        var (read, write) = field.Type switch
         {
             FieldType.Bool => AddBoolControl(valueColumn, field),
             FieldType.Choice => AddChoiceControl(valueColumn, field),
@@ -85,18 +106,82 @@ public partial class EnvironmentEditWindow : Window
             FieldType.Int => AddTextControl(valueColumn, field, multiline: false),
             _ => AddTextControl(valueColumn, field, multiline: false),
         };
-        _rows.Add((field, read));
 
         // A Bool field's own hint is already the checkbox's own label (see
         // AddBoolControl) - repeating it as a second line right below
         // would just show the same sentence twice.
-        if (!string.IsNullOrEmpty(field.Hint) && field.Type != FieldType.Bool)
-            valueColumn.Children.Add(new TextBlock { Text = field.Hint, Style = (Style)FindResource("HintText") });
+        TextBlock? hintBlock = null;
+        if (field.Type != FieldType.Bool)
+        {
+            var initialHint = ResolveHint(field);
+            if (!string.IsNullOrEmpty(initialHint))
+            {
+                hintBlock = new TextBlock { Text = initialHint, Style = (Style)FindResource("HintText") };
+                valueColumn.Children.Add(hintBlock);
+            }
+        }
+
+        _rowsByKey[field.Key] = new FieldRow { Field = field, Read = read, Write = write, HintBlock = hintBlock };
 
         FieldsPanel.Children.Add(grid);
     }
 
-    private Func<object?> AddTextControl(StackPanel column, ConfigField field, bool multiline)
+    /// <summary>A DependsOn.Hint result overrides the field's own static
+    /// Hint for whatever the depended-on field's CURRENT value is (null
+    /// falls back to the static Hint) - resolved against the live
+    /// control if that field's row already exists, otherwise (should not
+    /// happen for any schema today) just the static Hint.</summary>
+    private string? ResolveHint(ConfigField field)
+    {
+        if (field.DependsOn?.Hint is { } hintFor && _rowsByKey.TryGetValue(field.DependsOn.OnKey, out var onRow))
+            return hintFor(onRow.Read()) ?? field.Hint;
+        return field.Hint;
+    }
+
+    /// <summary>Called whenever a field's own control changes value -
+    /// updates every OTHER field whose ConfigField.DependsOn.OnKey is
+    /// this one: its hint text (always), and - only if that field is
+    /// currently empty - fills in DependsOn.SuggestedDefault. Never
+    /// overwrites a value the user (or the loaded Environment) already
+    /// set, so this only ever offers a default into a field nobody has
+    /// touched yet.</summary>
+    private void OnFieldChanged(string key, object? newValue)
+    {
+        foreach (var row in _rowsByKey.Values)
+        {
+            var dep = row.Field.DependsOn;
+            if (dep == null || dep.OnKey != key) continue;
+
+            if (dep.Hint != null && row.HintBlock != null)
+                row.HintBlock.Text = dep.Hint(newValue) ?? row.Field.Hint ?? "";
+
+            if (dep.SuggestedDefault != null)
+            {
+                var current = row.Read();
+                var isEmpty = current is null || (current is string s && string.IsNullOrWhiteSpace(s));
+                if (isEmpty)
+                {
+                    var suggested = dep.SuggestedDefault(newValue);
+                    if (suggested != null) row.Write(suggested);
+                }
+            }
+        }
+    }
+
+    /// <summary>A field's own static Required flag, OR'd with
+    /// DependsOn.IsRequired evaluated against whatever the depended-on
+    /// field's control currently shows - not a snapshot of _env, so
+    /// changing Architecture and then immediately hitting Save sees the
+    /// just-changed value.</summary>
+    private bool IsRequiredNow(ConfigField field)
+    {
+        if (field.Required) return true;
+        if (field.DependsOn?.IsRequired is { } isRequired && _rowsByKey.TryGetValue(field.DependsOn.OnKey, out var onRow))
+            return isRequired(onRow.Read());
+        return false;
+    }
+
+    private (Func<object?> Read, Action<object?> Write) AddTextControl(StackPanel column, ConfigField field, bool multiline)
     {
         var box = new TextBox
         {
@@ -106,12 +191,14 @@ public partial class EnvironmentEditWindow : Window
             Height = multiline ? 60 : double.NaN,
         };
         column.Children.Add(box);
-        return field.Type == FieldType.Int
+        Func<object?> read = field.Type == FieldType.Int
             ? () => int.TryParse(box.Text.Trim(), out var n) ? n : (int?)null
             : () => box.Text.Trim();
+        Action<object?> write = v => box.Text = v?.ToString() ?? "";
+        return (read, write);
     }
 
-    private Func<object?> AddBoolControl(StackPanel column, ConfigField field)
+    private (Func<object?> Read, Action<object?> Write) AddBoolControl(StackPanel column, ConfigField field)
     {
         var check = new CheckBox
         {
@@ -124,10 +211,10 @@ public partial class EnvironmentEditWindow : Window
         // otherwise be redundant right under a checkbox that already
         // carries the same text.
         column.Children.Add(check);
-        return () => check.IsChecked == true;
+        return (() => check.IsChecked == true, v => check.IsChecked = v is true);
     }
 
-    private Func<object?> AddChoiceControl(StackPanel column, ConfigField field)
+    private (Func<object?> Read, Action<object?> Write) AddChoiceControl(StackPanel column, ConfigField field)
     {
         var combo = new ComboBox();
         // Platform.Architecture's own options are runtime-dependent
@@ -135,20 +222,33 @@ public partial class EnvironmentEditWindow : Window
         // has) rather than the fixed list every other Choice field
         // declares in its own schema - see ConfigField.Choices' own
         // remarks.
-        var choices = field.Key == "Platform.Architecture"
+        var choices = (field.Key == "Platform.Architecture"
             ? _vmService.ListArchitectures(_env.EngineId, _settings)
-            : field.Choices ?? Array.Empty<string>();
+            : field.Choices ?? Array.Empty<string>()).ToList();
         foreach (var choice in choices) combo.Items.Add(choice);
 
         var current = field.Get(_env)?.ToString();
-        var index = choices.ToList().FindIndex(c => string.Equals(c, current, StringComparison.OrdinalIgnoreCase));
+        var index = choices.FindIndex(c => string.Equals(c, current, StringComparison.OrdinalIgnoreCase));
         combo.SelectedIndex = index >= 0 ? index : 0;
 
         column.Children.Add(combo);
-        return () => combo.SelectedItem as string;
+
+        // Generic, not special-cased to Platform.Architecture - any
+        // Choice field other fields depend on reacts the same way.
+        combo.SelectionChanged += (_, _) => OnFieldChanged(field.Key, combo.SelectedItem as string);
+
+        Action<object?> write = v =>
+        {
+            var target = v as string;
+            var idx = -1;
+            for (var i = 0; i < combo.Items.Count; i++)
+                if (string.Equals(combo.Items[i] as string, target, StringComparison.OrdinalIgnoreCase)) { idx = i; break; }
+            if (idx >= 0) combo.SelectedIndex = idx;
+        };
+        return (() => combo.SelectedItem as string, write);
     }
 
-    private Func<object?> AddFilePathControl(StackPanel column, ConfigField field)
+    private (Func<object?> Read, Action<object?> Write) AddFilePathControl(StackPanel column, ConfigField field)
     {
         var row = new Grid();
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -189,7 +289,7 @@ public partial class EnvironmentEditWindow : Window
         }
 
         column.Children.Add(row);
-        return () => box.Text.Trim();
+        return (() => box.Text.Trim(), v => box.Text = v as string ?? "");
     }
 
     private void OkButton_Click(object sender, RoutedEventArgs e)
@@ -201,25 +301,25 @@ public partial class EnvironmentEditWindow : Window
         // partially-applied save (some fields written, then an error on a
         // later one) would leave _env in a worse state than either
         // "unchanged" or "fully updated."
-        foreach (var (field, read) in _rows)
+        foreach (var row in _rowsByKey.Values)
         {
-            var value = read();
-            if (field.Required && (value is null || (value is string s && string.IsNullOrWhiteSpace(s))))
+            var value = row.Read();
+            if (IsRequiredNow(row.Field) && (value is null || (value is string s && string.IsNullOrWhiteSpace(s))))
             {
-                ValidationText.Text = $"{field.Label} is required.";
+                ValidationText.Text = $"{row.Field.Label} is required.";
                 return;
             }
-            if (field.Type == FieldType.Int && value is null)
+            if (row.Field.Type == FieldType.Int && value is null)
             {
-                ValidationText.Text = $"{field.Label} must be a whole number.";
+                ValidationText.Text = $"{row.Field.Label} must be a whole number.";
                 return;
             }
-            var error = field.Validate?.Invoke(value);
+            var error = row.Field.Validate?.Invoke(value);
             if (error != null) { ValidationText.Text = error; return; }
         }
 
         _env.Name = name;
-        foreach (var (field, read) in _rows) field.Set(_env, read());
+        foreach (var row in _rowsByKey.Values) row.Field.Set(_env, row.Read());
 
         // Non-blocking - the Environment is still saved either way, same
         // as SettingsWindow's own identical check for the same reason (a

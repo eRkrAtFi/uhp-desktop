@@ -1,4 +1,13 @@
-# Deferred to roadmap item 3 (RISC-V bare-metal / firmware slice)
+# Next step: roadmap item 3 (RISC-V bare-metal / firmware slice)
+
+With Steps A and B (vision/VISION.md's roadmap items 1 and 2 - the engine
+interface and the Environment/Platform/Workload model with one schema-
+driven editor) released as v0.4.0/v0.4.1/v0.4.2, the next step is roadmap
+item 3 itself: **RISC-V bare-metal environment with a GDB stub** - a
+Platform of RISC-V `virt`, a Workload that is a bare ELF file (no kernel,
+no initramfs), run on riscv-emu or QEMU (one switch between them), a UART
+console, and a GDB stub in riscv-emu for a debugger to attach to. The
+rest of this file is what that step actually needs to build.
 
 Decided while building Step B's Environment/Platform/Workload model and
 its "New Environment" templates: **no "Bare-metal / Embedded" template

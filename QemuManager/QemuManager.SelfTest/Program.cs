@@ -1182,6 +1182,59 @@ Console.WriteLine("\n--- IEngine.GetConfigSchema: validation (vision/VISION.md r
     Console.WriteLine($"ListArchitectures(\"RiscvEmu\") is always exactly riscv64: {riscvArchs.Count == 1 && riscvArchs[0] == "riscv64"}");
 }
 
+Console.WriteLine("\n--- ConfigField.DependsOn: Platform.MachineType required+defaulted per Platform.Architecture (v0.4.2 - replaces the old VmEditWindow's own hard-coded ArchHints with a schema-level dependency EnvironmentEditWindow reacts to generically) ---");
+{
+    IVmService depService = new VmService();
+    var qemuSchema = depService.GetConfigSchema("Qemu");
+    var machineTypeField = qemuSchema.First(f => f.Key == "Platform.MachineType");
+    var dep = machineTypeField.DependsOn;
+    Console.WriteLine($"Platform.MachineType has a DependsOn on Platform.Architecture: {dep?.OnKey == "Platform.Architecture"}");
+
+    // The same Required-ness formula EnvironmentEditWindow.IsRequiredNow
+    // itself applies: the field's own static Required OR'd with
+    // DependsOn.IsRequired evaluated against the other field's current
+    // value.
+    bool IsRequiredFor(string arch) => machineTypeField.Required || (dep?.IsRequired?.Invoke(arch) ?? false);
+    Console.WriteLine($"aarch64 requires Platform.MachineType: {IsRequiredFor("aarch64")} (expected: True)");
+    Console.WriteLine($"arm requires Platform.MachineType: {IsRequiredFor("arm")} (expected: True)");
+    Console.WriteLine($"riscv64 requires Platform.MachineType: {IsRequiredFor("riscv64")} (expected: True)");
+    Console.WriteLine($"riscv32 requires Platform.MachineType: {IsRequiredFor("riscv32")} (expected: True)");
+    Console.WriteLine($"x86_64 does NOT require Platform.MachineType: {!IsRequiredFor("x86_64")} (expected: True)");
+
+    // "aarch64 bez machine type neprejde validaciou, s 'virt' ano" - the
+    // exact save-time check EnvironmentEditWindow.OkButton_Click applies
+    // to every field: required-and-empty fails, required-and-non-empty
+    // passes.
+    bool PassesValidation(string arch, string? machineType) =>
+        !(IsRequiredFor(arch) && string.IsNullOrWhiteSpace(machineType));
+    Console.WriteLine($"aarch64 with an empty Machine type fails validation: {!PassesValidation("aarch64", "")} (expected: True)");
+    Console.WriteLine($"aarch64 with Machine type \"virt\" passes validation: {PassesValidation("aarch64", "virt")} (expected: True)");
+    Console.WriteLine($"x86_64 with an empty Machine type still passes validation (not required for it): {PassesValidation("x86_64", "")} (expected: True)");
+
+    // "zmena architektury doplni predvolenu hodnotu" - DependsOn.SuggestedDefault
+    // is exactly what EnvironmentEditWindow.OnFieldChanged offers into an
+    // EMPTY Machine type field right after Architecture changes (never
+    // overwriting a value already there - that emptiness check lives in
+    // OnFieldChanged itself, not in SuggestedDefault).
+    Console.WriteLine($"SuggestedDefault for aarch64 is \"virt\": {dep?.SuggestedDefault?.Invoke("aarch64") as string == "virt"}");
+    Console.WriteLine($"SuggestedDefault for riscv64 is \"virt\": {dep?.SuggestedDefault?.Invoke("riscv64") as string == "virt"}");
+    Console.WriteLine($"SuggestedDefault for x86_64 is null (no suggestion to offer - QEMU's own default machine type is fine): {dep?.SuggestedDefault?.Invoke("x86_64") == null}");
+
+    // DependsOn.Hint: a per-architecture hint overrides the field's own
+    // static Hint; an architecture with no suggestion falls back to it
+    // (ResolveHint/OnFieldChanged's own "?? row.Field.Hint" fallback).
+    var hintForAarch64 = dep?.Hint?.Invoke("aarch64");
+    var hintForX86 = dep?.Hint?.Invoke("x86_64");
+    Console.WriteLine($"Hint for aarch64 mentions \"virt\": {hintForAarch64?.Contains("virt") == true}");
+    Console.WriteLine($"Hint for x86_64 is null (falls back to the field's own static Hint): {hintForX86 == null}");
+
+    // riscv-emu has no Platform.MachineType field at all (its own
+    // architecture is always riscv64, fixed, with nothing for QEMU's own
+    // -M to configure) - this DependsOn is a QEMU-only concern.
+    var riscvSchemaForDep = depService.GetConfigSchema("RiscvEmu");
+    Console.WriteLine($"riscv-emu schema has no Platform.MachineType field: {!riscvSchemaForDep.Any(f => f.Key == "Platform.MachineType")}");
+}
+
 Console.WriteLine("\n--- No DataGrid in the app is editable unless explicitly intended (bug: double-click on a cell crashed the app) ---");
 // A static check of the actual .xaml source, not a runtime/window check -
 // in keeping with "logic belongs in Core, tested without a window" even
