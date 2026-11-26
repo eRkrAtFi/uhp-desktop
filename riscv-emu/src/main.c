@@ -142,6 +142,11 @@ static void usage(const char *argv0)
         "                     RAM and sets pc/a0/a1/t3 per the boot protocol -\n"
         "                     the one-flag equivalent of boot/boot.sh, not\n"
         "                     combinable with --load/--entry/a raw-binary\n"
+        "  --elf <file>       load this ELF64/EM_RISCV file by its own PT_LOAD\n"
+        "                     program headers and start at its own e_entry, in\n"
+        "                     M-mode, with no firmware/kernel involved - for a\n"
+        "                     bare-metal program (see examples/baremetal-hello);\n"
+        "                     not combinable with --load/--entry/a raw-binary\n"
         "  --initrd <f>       initramfs to go with --kernel (optional)\n"
         "  --append <args>    extra kernel cmdline, appended after this\n"
         "                     machine's own console=/earlycon= args\n"
@@ -201,6 +206,132 @@ static int load_at(Machine *m, uint64_t addr, const char *path)
 static uint64_t align_up(uint64_t value, uint64_t alignment)
 {
     return (value + alignment - 1) / alignment * alignment;
+}
+
+/* vision/VISION.md roadmap item 3, M2: --elf <file> loads a real ELF64
+ * file by its own PT_LOAD program headers instead of a flat raw-binary
+ * dump at RAM_BASE (the plain <raw-binary> / --load path above) - no
+ * firmware, no kernel, starts directly at e_entry in M-mode (cpu_reset's
+ * own default privilege level, unchanged). Only what qemu-system-riscv64
+ * -M virt -bios none -kernel <elf> itself needs to agree with: ELF64,
+ * little-endian, EM_RISCV, each PT_LOAD segment's file bytes copied to
+ * its own p_paddr with p_memsz - p_filesz trailing bytes zeroed (.bss). */
+typedef struct __attribute__((packed)) {
+    uint8_t  e_ident[16];
+    uint16_t e_type;
+    uint16_t e_machine;
+    uint32_t e_version;
+    uint64_t e_entry;
+    uint64_t e_phoff;
+    uint64_t e_shoff;
+    uint32_t e_flags;
+    uint16_t e_ehsize;
+    uint16_t e_phentsize;
+    uint16_t e_phnum;
+    uint16_t e_shentsize;
+    uint16_t e_shnum;
+    uint16_t e_shstrndx;
+} Elf64Header;
+
+typedef struct __attribute__((packed)) {
+    uint32_t p_type;
+    uint32_t p_flags;
+    uint64_t p_offset;
+    uint64_t p_vaddr;
+    uint64_t p_paddr;
+    uint64_t p_filesz;
+    uint64_t p_memsz;
+    uint64_t p_align;
+} Elf64Phdr;
+
+#define ELF_PT_LOAD   1u
+#define ELF_EM_RISCV  243u
+#define ELFCLASS64    2u
+#define ELFDATA2LSB   1u
+
+static int load_elf(Machine *m, const char *path, uint64_t *out_entry)
+{
+    uint64_t len;
+    uint8_t *data = read_file(path, &len);
+    Elf64Header hdr;
+    int loaded_any = 0;
+    uint16_t i;
+
+    if (!data) return 0;
+    if (len < sizeof(hdr)) {
+        fprintf(stderr, "riscv-emu: %s is too short to be a valid ELF file\n", path);
+        free(data);
+        return 0;
+    }
+    memcpy(&hdr, data, sizeof(hdr));
+
+    if (hdr.e_ident[0] != 0x7f || hdr.e_ident[1] != 'E' ||
+        hdr.e_ident[2] != 'L'  || hdr.e_ident[3] != 'F') {
+        fprintf(stderr, "riscv-emu: %s is not an ELF file\n", path);
+        free(data);
+        return 0;
+    }
+    if (hdr.e_ident[4] != ELFCLASS64) {
+        fprintf(stderr, "riscv-emu: %s is not a 64-bit ELF file (ELFCLASS64)\n", path);
+        free(data);
+        return 0;
+    }
+    if (hdr.e_ident[5] != ELFDATA2LSB) {
+        fprintf(stderr, "riscv-emu: %s is not a little-endian ELF file (ELFDATA2LSB)\n", path);
+        free(data);
+        return 0;
+    }
+    if (hdr.e_machine != ELF_EM_RISCV) {
+        fprintf(stderr, "riscv-emu: %s is not a RISC-V ELF file (e_machine=%u, expected %u)\n",
+                path, hdr.e_machine, ELF_EM_RISCV);
+        free(data);
+        return 0;
+    }
+    if (hdr.e_phoff == 0 || hdr.e_phnum == 0) {
+        fprintf(stderr, "riscv-emu: %s has no program headers to load\n", path);
+        free(data);
+        return 0;
+    }
+    if (hdr.e_phoff > len ||
+        (uint64_t)hdr.e_phnum * hdr.e_phentsize > len - hdr.e_phoff) {
+        fprintf(stderr, "riscv-emu: %s's program header table runs past the end of the file\n", path);
+        free(data);
+        return 0;
+    }
+
+    for (i = 0; i < hdr.e_phnum; i++) {
+        Elf64Phdr ph;
+        memcpy(&ph, data + hdr.e_phoff + (uint64_t)i * hdr.e_phentsize, sizeof(ph));
+        if (ph.p_type != ELF_PT_LOAD) continue;
+        if (ph.p_offset > len || ph.p_filesz > len - ph.p_offset) {
+            fprintf(stderr, "riscv-emu: %s's segment %u runs past the end of the file\n", path, i);
+            free(data);
+            return 0;
+        }
+        if (ph.p_paddr < RAM_BASE || ph.p_memsz > m->mem_size ||
+            ph.p_paddr - RAM_BASE > m->mem_size - ph.p_memsz) {
+            fprintf(stderr, "riscv-emu: %s's segment %u at 0x%llx (%llu bytes) does not fit in guest RAM\n",
+                    path, i, (unsigned long long)ph.p_paddr, (unsigned long long)ph.p_memsz);
+            free(data);
+            return 0;
+        }
+        memcpy(m->mem + (ph.p_paddr - RAM_BASE), data + ph.p_offset, ph.p_filesz);
+        if (ph.p_memsz > ph.p_filesz)
+            memset(m->mem + (ph.p_paddr - RAM_BASE) + ph.p_filesz, 0, ph.p_memsz - ph.p_filesz);
+        fprintf(stderr, "riscv-emu: loaded %s segment %u at 0x%llx (%llu bytes, %llu bss)\n",
+                path, i, (unsigned long long)ph.p_paddr, (unsigned long long)ph.p_filesz,
+                (unsigned long long)(ph.p_memsz - ph.p_filesz));
+        loaded_any = 1;
+    }
+    if (!loaded_any) {
+        fprintf(stderr, "riscv-emu: %s has no PT_LOAD segments\n", path);
+        free(data);
+        return 0;
+    }
+
+    *out_entry = hdr.e_entry;
+    free(data);
+    return 1;
 }
 
 /* Reads the Image header's text_offset field (little-endian u64 at file
@@ -328,6 +459,7 @@ int main(int argc, char **argv)
 {
     Machine m;
     const char *image = NULL;
+    const char *elf_path = NULL;
     const char *kernel_path = NULL, *initrd_path = NULL, *append_args = NULL;
     const char *firmware_path = "boot/firmware.bin";
     int dump = 0, i, explicit_entry = 0;
@@ -434,6 +566,8 @@ int main(int argc, char **argv)
             net_init(&m);
         } else if (!strcmp(argv[i], "--mem") && i + 1 < argc) {
             i++; /* already consumed in the pre-scan pass above */
+        } else if (!strcmp(argv[i], "--elf") && i + 1 < argc) {
+            elf_path = argv[++i];
         } else if (!strcmp(argv[i], "--kernel") && i + 1 < argc) {
             kernel_path = argv[++i];
         } else if (!strcmp(argv[i], "--initrd") && i + 1 < argc) {
@@ -452,8 +586,8 @@ int main(int argc, char **argv)
     }
 
     if (kernel_path) {
-        if (image || explicit_entry) {
-            fprintf(stderr, "riscv-emu: --kernel is not combinable with --load/--entry/a raw-binary\n");
+        if (image || explicit_entry || elf_path) {
+            fprintf(stderr, "riscv-emu: --kernel is not combinable with --load/--entry/--elf/a raw-binary\n");
             free(m.mem);
             return 1;
         }
@@ -461,6 +595,18 @@ int main(int argc, char **argv)
             free(m.mem);
             return 1;
         }
+    } else if (elf_path) {
+        uint64_t elf_entry;
+        if (image || explicit_entry) {
+            fprintf(stderr, "riscv-emu: --elf is not combinable with --load/--entry/a raw-binary\n");
+            free(m.mem);
+            return 1;
+        }
+        if (!load_elf(&m, elf_path, &elf_entry)) {
+            free(m.mem);
+            return 1;
+        }
+        m.cpu.pc = elf_entry;
     } else if (image) {
         data = read_file(image, &len);
         if (!data) { free(m.mem); return 1; }
