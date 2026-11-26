@@ -333,8 +333,9 @@ QemuManager/
                                GetResourceUsage need, factored out once rather
                                than kept duplicated
   MainWindow.xaml(.cs)        Environment list + toolbar
-  NewEnvironmentWindow.xaml(.cs)   "Operating System or Kernel / Bootloader?"
-                               template picker shown by New Environment
+  NewEnvironmentWindow.xaml(.cs)   "Operating System, Kernel / Bootloader,
+                               or Bare-metal / Embedded?" template picker
+                               shown by New Environment
   EnvironmentEditWindow.xaml(.cs)   one schema-driven create/edit form for
                                either engine (see IEngine.GetConfigSchema)
   ConsoleWindow.xaml(.cs)     live terminal for a running Environment of either

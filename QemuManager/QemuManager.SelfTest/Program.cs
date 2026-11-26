@@ -1235,6 +1235,61 @@ Console.WriteLine("\n--- ConfigField.DependsOn: Platform.MachineType required+de
     Console.WriteLine($"riscv-emu schema has no Platform.MachineType field: {!riscvSchemaForDep.Any(f => f.Key == "Platform.MachineType")}");
 }
 
+Console.WriteLine("\n--- Bare-metal ELF Environment: the example program runs on BOTH engines via IEngine/the schema (no EngineId branching), UART output matches (roadmap item 3, M4) ---");
+{
+    var elfPath = Path.Combine(riscvEmuDir, "examples", "baremetal-hello", "hello.elf");
+    if (!File.Exists(elfPath))
+    {
+        Console.WriteLine($"{elfPath} not built - run `make baremetal-hello` in riscv-emu first. Skipping.");
+    }
+    else
+    {
+        IVmService bareMetalService = new VmService();
+        var bareMetalSettings = new AppSettings { QemuDir = qemuDir, RiscvEmuDir = riscvEmuDir };
+
+        async Task<string> RunToCompletion(EnvironmentConfig env, string label)
+        {
+            Console.WriteLine($"{label}: {await bareMetalService.StartAsync(env, bareMetalSettings)}");
+            var deadline = DateTime.UtcNow.AddSeconds(15);
+            while (DateTime.UtcNow < deadline && bareMetalService.GetState(env) != VmState.Stopped)
+                await Task.Delay(100);
+            var stopped = bareMetalService.GetState(env) == VmState.Stopped;
+            Console.WriteLine($"{label} ran the bare-metal ELF to completion: {stopped} (expected: True)");
+            if (!stopped) Console.WriteLine(bareMetalService.ForceStop(env));
+            return bareMetalService.GetConsoleBuffer(env.Id);
+        }
+
+        var riscvVm = new EnvironmentConfig { EngineId = "RiscvEmu", Name = "selftest-baremetal-riscv", Workload = new Workload { ElfPath = elfPath } };
+        var riscvOutput = await RunToCompletion(riscvVm, "riscv-emu");
+        Console.WriteLine($"riscv-emu UART output: {riscvOutput.Replace("\n", "\\n").Replace("\r", "")}");
+
+        if (QemuLocator.LooksLikeQemuDir(qemuDir))
+        {
+            var qemuVm = new EnvironmentConfig
+            {
+                EngineId = "Qemu",
+                Name = "selftest-baremetal-qemu",
+                Platform = new Platform { Architecture = "riscv64", MachineType = "virt", MemoryMB = 128, CpuCores = 1 },
+                Workload = new Workload { ElfPath = elfPath },
+                Debug = new DebugConfiguration { Display = "console" },
+            };
+            var qemuOutput = await RunToCompletion(qemuVm, "QEMU");
+            Console.WriteLine($"QEMU UART output: {qemuOutput.Replace("\n", "\\n").Replace("\r", "")}");
+            // riscv-emu's own buffer also carries its own "loaded .../
+            // virtio-net attached" diagnostic lines ahead of the real
+            // UART bytes (see RiscvEmuProcessManager's own ReadStderrAsync
+            // remarks on what gets forwarded) - QEMU's console-mode
+            // buffer has no such preamble, so the real guest output is
+            // riscv-emu's own buffer's tail, not the whole thing.
+            Console.WriteLine($"UART output matches between riscv-emu and QEMU (riscv-emu's own buffer ends with QEMU's pure UART output): {riscvOutput.EndsWith(qemuOutput)} (expected: True)");
+        }
+        else
+        {
+            Console.WriteLine($"QEMU not found in '{qemuDir}' - skipping the QEMU leg of this comparison.");
+        }
+    }
+}
+
 Console.WriteLine("\n--- No DataGrid in the app is editable unless explicitly intended (bug: double-click on a cell crashed the app) ---");
 // A static check of the actual .xaml source, not a runtime/window check -
 // in keeping with "logic belongs in Core, tested without a window" even

@@ -204,6 +204,14 @@ public partial class MainWindow : Window
         if (kindDialog.ShowDialog() != true) return;
 
         var vm = _vmService.CreateDraft(kindDialog.SelectedEngineId);
+        if (kindDialog.IsBareMetal)
+        {
+            // The "Bare-metal / Embedded" template's own defaults - every
+            // other field stays whatever CreateDraft already gives
+            // riscv-emu (e.g. Platform.MemoryMB = 512).
+            vm.Debug.GdbEnabled = true;
+            vm.Debug.EnterSends = "LF";
+        }
         bool? result = new EnvironmentEditWindow(vm, _settings, _vmService) { Owner = this }.ShowDialog();
 
         if (result == true)
@@ -347,6 +355,13 @@ public partial class MainWindow : Window
                     "Display is gtk/sdl - it shows its own window, not a console here. Edit the Environment and set Display to 'console' to change that.");
                 break;
         }
+    }
+
+    private void GdbCopyButton_Click(object sender, RoutedEventArgs e)
+    {
+        var item = SelectedItem;
+        if (item?.GdbAttachCommand is not { } command) return;
+        System.Windows.Clipboard.SetText(command);
     }
 
     /// <summary>Idempotent: if a console for this VM is already open,

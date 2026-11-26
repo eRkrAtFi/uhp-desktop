@@ -110,4 +110,9 @@ public interface IEngine : IConsoleSource
     /// this engine's own real capabilities already baked in - see
     /// VmHardwareDescription's own remarks.</summary>
     VmHardwareDescription GetHardwareDescription(EnvironmentConfig env);
+
+    /// <summary>The "host:port" a running Environment's GDB stub is
+    /// listening on (Debug.GdbEnabled), or null if that was not set, the
+    /// engine does not support it, or it is not running at all.</summary>
+    string? GetGdbEndpoint(string vmId);
 }

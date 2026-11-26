@@ -106,6 +106,10 @@ public interface IVmService : IConsoleSource
     /// endpoint ("host:port") when the first is Vnc, otherwise null.</summary>
     (ConsoleAvailability kind, string? detail) GetConsoleAvailability(EnvironmentConfig vm);
 
+    /// <summary>The "host:port" a running VM's GDB stub (Debug.GdbEnabled)
+    /// is listening on, or null if that was not set or it is not running.</summary>
+    string? GetGdbEndpoint(EnvironmentConfig vm);
+
     /// <summary>Re-adopts this VM's OS process if a previous run of this
     /// app (or this one, after a crash) left it running - see
     /// VmProcessManager/RiscvEmuProcessManager.TryReattach for how each

@@ -19,8 +19,7 @@
         <!-- Only templates for engines this app can actually run today -
              see vision/VISION.md's own full template list (Operating
              System, Firmware, Kernel / Bootloader, Bare-metal / Embedded,
-             Custom) and vision/NEXT.md for exactly why "Bare-metal /
-             Embedded" is not offered yet. -->
+             Custom). -->
         <Button x:Name="OperatingSystemButton" Click="OperatingSystemButton_Click" AutomationProperties.Name="New Operating System environment">
             <StackPanel>
                 <TextBlock Text="Operating System" FontWeight="Bold"/>
@@ -32,6 +31,13 @@
             <StackPanel>
                 <TextBlock Text="Kernel / Bootloader" FontWeight="Bold"/>
                 <TextBlock Text="This project's own hand-written RISC-V emulator (riscv-emu) - boots a riscv64 Linux Image + initramfs directly, no disk required." FontSize="11" Opacity="0.8" TextWrapping="Wrap"/>
+            </StackPanel>
+        </Button>
+
+        <Button x:Name="BareMetalButton" Click="BareMetalButton_Click" AutomationProperties.Name="New Bare-metal / Embedded environment">
+            <StackPanel>
+                <TextBlock Text="Bare-metal / Embedded" FontWeight="Bold"/>
+                <TextBlock Text="A single ELF file, no kernel/firmware at all - this project's own riscv-emu, with a GDB stub ready to attach a debugger to. QEMU can run one too (its own Bare-metal ELF field, under Operating System's own editor)." FontSize="11" Opacity="0.8" TextWrapping="Wrap"/>
             </StackPanel>
         </Button>
 

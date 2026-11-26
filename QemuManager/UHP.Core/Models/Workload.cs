@@ -1,19 +1,10 @@
 namespace QemuManager.Models;
 
 /// <summary>What runs on the <see cref="Platform"/> - a disk/ISO (the
-/// "Operating System" template), or a kernel + initramfs (the "Kernel /
-/// Bootloader" template), today. See vision/VISION.md's own data-model
-/// table.
-///
-/// Deliberately leaves room to grow without having added anything for it
-/// yet: a bare-metal workload (a single ELF/binary with no kernel at all -
-/// riscv-emu's own CLI already supports this, as a bare positional
-/// argument or via --load/--entry) is roadmap item 3, and the "Bare-metal
-/// / Embedded" template that would create one is intentionally not shown
-/// yet - see vision/NEXT.md for exactly what is deferred and why. Adding
-/// a Kind/discriminator now, before a real bare-metal use case exists to
-/// decide its exact shape from, would be guessing; every field below is
-/// one at least one of today's two working templates actually uses.</summary>
+/// "Operating System" template), a kernel + initramfs (the "Kernel /
+/// Bootloader" template), or a bare ELF with no kernel/firmware at all
+/// (the "Bare-metal / Embedded" template, roadmap item 3 - see
+/// ElfPath). See vision/VISION.md's own data-model table.</summary>
 public class Workload
 {
     /// <summary>Path to a disk image. Empty means none attached. For
@@ -60,4 +51,15 @@ public class Workload
     /// this project's own bundled Buildroot image; a guest with a
     /// different init system may need something else.</summary>
     public string ShutdownCommand { get; set; } = "poweroff";
+
+    /// <summary>Path to a bare ELF64/EM_RISCV file to run directly, no
+    /// kernel boot protocol and no firmware involved - the "Bare-metal /
+    /// Embedded" template (roadmap item 3). riscv-emu loads it by its
+    /// own PT_LOAD program headers and starts at e_entry in M-mode
+    /// (--elf); QEMU does the same via its own ELF loader (-bios none
+    /// -kernel &lt;this path&gt;, forcing no firmware regardless of
+    /// Firmware.FirmwarePath - that field has no meaning for a workload
+    /// this is set for). Mutually exclusive with KernelPath/InitrdPath -
+    /// leave empty for every other template.</summary>
+    public string ElfPath { get; set; } = "";
 }
