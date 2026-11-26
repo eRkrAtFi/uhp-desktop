@@ -91,7 +91,7 @@ public partial class TerminalControl : UserControl
     /// Core already captured (GetConsoleBuffer), then streams live output
     /// as it arrives. Call Detach() first if this control was already
     /// showing a different VM. enterSends is that VM's own
-    /// VmConfig.EnterSends (what the terminal's Enter key should actually
+    /// DebugConfiguration.EnterSends (what the terminal's Enter key should actually
     /// send down this specific console - see its own remarks) - re-sent
     /// to terminal.html on every call since the detail page's own preview
     /// reuses one control across VMs that can each have a different

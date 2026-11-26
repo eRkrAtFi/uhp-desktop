@@ -33,48 +33,63 @@ public interface IVmService : IConsoleSource
     /// <summary>Every persisted VM, freshly loaded from disk, with any that
     /// were left running by a previous instance of this app re-adopted
     /// (see TryReattach) before being returned.</summary>
-    IReadOnlyList<VmConfig> LoadAll();
+    IReadOnlyList<EnvironmentConfig> LoadAll();
 
-    void Save(VmConfig vm);
-    void Delete(VmConfig vm);
+    void Save(EnvironmentConfig vm);
+    void Delete(EnvironmentConfig vm);
 
-    /// <summary>A new VmConfig of the given Kind, with that engine's own
+    /// <summary>A new EnvironmentConfig of the given Kind, with that engine's own
     /// sensible defaults already applied (e.g. riscv-emu's 512 MB default,
-    /// which is sized for it, not inherited from VmConfig's own class
+    /// which is sized for it, not inherited from EnvironmentConfig's own class
     /// default sized for QEMU).</summary>
-    VmConfig CreateDraft(string kind);
+    EnvironmentConfig CreateDraft(string kind);
+
+    /// <summary>engineId's own configuration schema - see
+    /// IEngine.GetConfigSchema's own remarks. What EnvironmentEditWindow
+    /// renders instead of VmEditWindow/RiscvEmuEditWindow's own hand-laid-
+    /// out, per-engine XAML.</summary>
+    IReadOnlyList<Models.ConfigField> GetConfigSchema(string engineId);
+
+    /// <summary>engineId's own architecture list (QEMU: whatever
+    /// qemu-system-*.exe binaries settings.QemuDir actually has; riscv-emu:
+    /// always exactly one, fixed).</summary>
+    IReadOnlyList<string> ListArchitectures(string engineId, AppSettings settings);
+
+    /// <summary>engineId's own static capabilities - see
+    /// EngineCapabilities' own remarks.</summary>
+    Models.EngineCapabilities GetCapabilities(string engineId);
 
     // --- Engine operations ---
 
     /// <summary>A VM's engine-agnostic run state right now.</summary>
-    VmState GetState(VmConfig vm);
-    bool IsRunning(VmConfig vm);
+    VmState GetState(EnvironmentConfig vm);
+    bool IsRunning(EnvironmentConfig vm);
 
     /// <summary>Real host-side CPU%/memory/uptime for the VM's actual OS
     /// process. All zero/null fields when not running. Prefer subscribing
     /// to StatsReceived for live updates over polling this in a loop - see
     /// its own remarks for why.</summary>
-    VmSnapshot GetSnapshot(VmConfig vm);
+    VmSnapshot GetSnapshot(EnvironmentConfig vm);
 
     /// <summary>Extra live detail beyond State that only QEMU can report
     /// (over QMP, e.g. "running" vs "paused") - null for a riscv-emu VM
     /// (no QMP-equivalent channel exists) and for a VM that is not
     /// currently Running.</summary>
-    Task<string?> GetGuestDetailAsync(VmConfig vm);
+    Task<string?> GetGuestDetailAsync(EnvironmentConfig vm);
 
     /// <summary>Display-ready hardware facts (CPU, memory, disk, network,
     /// console, accelerator) for this VM's Kind - see
     /// VmHardwareDescription's own remarks. Feeds Phase 3's "Hardware"
     /// card; today's grid/toolbar do not need it.</summary>
-    VmHardwareDescription GetHardwareDescription(VmConfig vm);
+    VmHardwareDescription GetHardwareDescription(EnvironmentConfig vm);
 
-    Task<string> StartAsync(VmConfig vm, AppSettings settings);
+    Task<string> StartAsync(EnvironmentConfig vm, AppSettings settings);
 
     /// <summary>Graceful shutdown. For QEMU: ACPI power-down over QMP,
     /// fire-and-forget (QEMU itself reports no further progress on it
     /// over any channel this app reads, so there is nothing to wait on
     /// here beyond the request being sent). For riscv-emu: types
-    /// VmConfig.ShutdownCommand at the guest's own console and genuinely
+    /// Workload.ShutdownCommand at the guest's own console and genuinely
     /// waits (up to settings.RiscvShutdownTimeoutSeconds) for the real
     /// process to exit on its own - see
     /// RiscvEmuProcessManager.ShutdownGracefullyAsync's own remarks for
@@ -84,19 +99,19 @@ public interface IVmService : IConsoleSource
     /// deciding" is not a timeout in the same sense) and is what the UI
     /// uses to decide whether to offer Force Stop for a riscv-emu VM that
     /// did not respond in time.</summary>
-    Task<ShutdownResult> ShutdownAsync(VmConfig vm, AppSettings settings);
+    Task<ShutdownResult> ShutdownAsync(EnvironmentConfig vm, AppSettings settings);
 
     /// <summary>What clicking "Console" on this VM should do right now -
     /// see <see cref="ConsoleAvailability"/>. The second value is the VNC
     /// endpoint ("host:port") when the first is Vnc, otherwise null.</summary>
-    (ConsoleAvailability kind, string? detail) GetConsoleAvailability(VmConfig vm);
+    (ConsoleAvailability kind, string? detail) GetConsoleAvailability(EnvironmentConfig vm);
 
     /// <summary>Re-adopts this VM's OS process if a previous run of this
     /// app (or this one, after a crash) left it running - see
     /// VmProcessManager/RiscvEmuProcessManager.TryReattach for how each
     /// engine does this. Returns true if the VM is now tracked as running,
     /// whether that is because it was just reattached or already was.</summary>
-    bool TryReattach(VmConfig vm);
+    bool TryReattach(EnvironmentConfig vm);
 
     // --- Idempotency guards (bug: a double-click on Console, Power On,
     // Shut Down, or Force Stop could race before the UI alone noticed -

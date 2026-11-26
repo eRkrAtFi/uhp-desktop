@@ -21,7 +21,7 @@ public class AppSettings
     public string RiscvEmuDir { get; set; } = DefaultRiscvEmuDir();
 
     /// <summary>How long VmService.ShutdownAsync waits, after sending a
-    /// riscv-emu VM's own VmConfig.ShutdownCommand to its console, for the
+    /// riscv-emu VM's own Workload.ShutdownCommand to its console, for the
     /// guest to actually power itself off before giving up and reporting a
     /// timeout - see VmService.ShutdownAsync's own remarks for why this
     /// never auto-escalates to Force Stop on its own. 60s is generous for

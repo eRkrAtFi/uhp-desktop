@@ -7,7 +7,7 @@ namespace QemuManager.Models;
 /// app restarts (crash, update, manual kill) without it having seen that
 /// process exit. Written by VmProcessManager/RiscvEmuProcessManager next to
 /// the VM's own config (see Services/RuntimeStateStore), deliberately kept
-/// out of VmConfig itself since it is runtime state, not part of the VM's
+/// out of EnvironmentConfig itself since it is runtime state, not part of the VM's
 /// persisted definition.
 /// </summary>
 public class RuntimeState

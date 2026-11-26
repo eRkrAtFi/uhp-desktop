@@ -24,5 +24,5 @@ public interface IConsoleSource
 
     void SendInput(string vmId, byte[] data);
 
-    string ForceStop(VmConfig vm);
+    string ForceStop(EnvironmentConfig vm);
 }

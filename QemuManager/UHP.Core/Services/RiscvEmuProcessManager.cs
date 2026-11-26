@@ -33,14 +33,14 @@ public class RunningRiscvEmu
 }
 
 /// <summary>
-/// Turns a <see cref="VmConfig"/> of kind RiscvEmu into a riscv-emu.exe
-/// process. Unlike real QEMU there is no QMP control channel and no guest
-/// ACPI power button to ask for a graceful shutdown - the guest's own
-/// console is the only channel, so a graceful stop here means typing
-/// VmConfig.ShutdownCommand at it and waiting for the guest to act on it
-/// (see ShutdownGracefullyAsync). ForceStop remains the only *immediate*
-/// way to stop one, for when a graceful wait is not what is wanted or
-/// has already timed out.
+/// Turns an <see cref="EnvironmentConfig"/> with EngineId "RiscvEmu" into a
+/// riscv-emu.exe process. Unlike real QEMU there is no QMP control channel
+/// and no guest ACPI power button to ask for a graceful shutdown - the
+/// guest's own console is the only channel, so a graceful stop here means
+/// typing Workload.ShutdownCommand at it and waiting for the guest to act
+/// on it (see ShutdownGracefullyAsync). ForceStop remains the only
+/// *immediate* way to stop one, for when a graceful wait is not what is
+/// wanted or has already timed out.
 /// </summary>
 public class RiscvEmuProcessManager : IEngine
 {
@@ -54,12 +54,56 @@ public class RiscvEmuProcessManager : IEngine
 
     public string Id => "RiscvEmu";
     public string DisplayName => "riscv-emu";
-    public bool CanHandle(VmConfig vm) => vm.Kind == Id;
 
-    /// <summary>VmConfig.MemoryMB's class default (2048) is sized for
+    public EngineCapabilities Capabilities { get; } = new(
+        SupportsMultipleDisplayModes: false,
+        SupportsDisk: true,
+        SupportsCdrom: false,
+        SupportsKernelBoot: true,
+        SupportsMachineType: false,
+        SupportsFirmware: false,
+        SupportsNetwork: true,
+        SupportsSmp: false,
+        SupportsGuestDetail: false,
+        SupportsSpeedMetric: true);
+
+    public bool CanHandle(EnvironmentConfig env) => env.EngineId == Id;
+
+    /// <summary>Platform.MemoryMB's class default (2048) is sized for
     /// QEMU; riscv-emu gets its own, smaller sensible default here
     /// instead of silently inheriting that one.</summary>
-    public VmConfig CreateDraft() => new() { Kind = Id, MemoryMB = 512 };
+    public EnvironmentConfig CreateDraft() => new() { EngineId = Id, Platform = new Platform { MemoryMB = 512 } };
+
+    public IReadOnlyList<string> ListArchitectures(AppSettings settings) => new[] { "riscv64" };
+
+    public IReadOnlyList<ConfigField> GetConfigSchema() => new List<ConfigField>
+    {
+        new() { Key = "Workload.KernelPath", Label = "Kernel Image", Type = FieldType.FilePath, Group = "Workload",
+            Get = e => e.Workload.KernelPath, Set = (e, v) => e.Workload.KernelPath = (string)v!, Required = true,
+            FileFilter = "Linux Image (Image;*.img;*.elf)|Image;*.img;*.elf|All files (*.*)|*.*" },
+        new() { Key = "Workload.InitrdPath", Label = "Initramfs", Type = FieldType.FilePath, Group = "Workload",
+            Get = e => e.Workload.InitrdPath, Set = (e, v) => e.Workload.InitrdPath = (string)v!,
+            FileFilter = "Initramfs (*.cpio.gz;*.cpio;*.img)|*.cpio.gz;*.cpio;*.img|All files (*.*)|*.*" },
+        new() { Key = "Workload.DiskPath", Label = "Disk image", Type = FieldType.FilePath, Group = "Workload",
+            Get = e => e.Workload.DiskPath, Set = (e, v) => e.Workload.DiskPath = (string)v!,
+            FileFilter = "Disk image (*.img;*.raw)|*.img;*.raw|All files (*.*)|*.*" },
+        new() { Key = "Platform.MemoryMB", Label = "Memory (MB)", Type = FieldType.Int, Group = "Platform",
+            Get = e => e.Platform.MemoryMB, Set = (e, v) => e.Platform.MemoryMB = (int)v!, Required = true,
+            Validate = v => (int)v! > 0 ? null : "Memory must be a positive number of MB." },
+        new() { Key = "Platform.NetworkMode", Label = "Network", Type = FieldType.Bool, Group = "Platform",
+            Get = e => e.Platform.NetworkMode == "user", Set = (e, v) => e.Platform.NetworkMode = (bool)v! ? "user" : "none",
+            Hint = "Attach virtio-net (NATed through this host)." },
+        new() { Key = "Workload.ExtraArgs", Label = "Extra boot args", Type = FieldType.Text, Group = "Workload",
+            Get = e => e.Workload.ExtraArgs, Set = (e, v) => e.Workload.ExtraArgs = (string)v!,
+            Hint = "Appended to the kernel command line (console=ttyS0 earlycon=sbi is always set)." },
+        new() { Key = "Workload.ShutdownCommand", Label = "Shutdown command", Type = FieldType.Text, Group = "Workload",
+            Get = e => e.Workload.ShutdownCommand, Set = (e, v) => e.Workload.ShutdownCommand = (string)v!, Required = true,
+            Hint = "Typed into the guest console when Shutdown is requested. Default works for this app's bundled busybox image." },
+        new() { Key = "Debug.EnterSends", Label = "Enter sends", Type = FieldType.Choice, Group = "Debug",
+            Get = e => e.Debug.EnterSends, Set = (e, v) => e.Debug.EnterSends = (string)v!,
+            Choices = new[] { "CR", "LF", "CRLF" },
+            Hint = "Change this only if Enter in the console does not submit a line - most guests need no change." },
+    };
 
     public VmState GetVmState(string vmId) => GetState(vmId) switch
     {
@@ -68,30 +112,30 @@ public class RiscvEmuProcessManager : IEngine
         _ => VmState.Stopped,
     };
 
-    public Task<string> StartAsync(VmConfig vm, AppSettings settings) =>
+    public Task<string> StartAsync(EnvironmentConfig vm, AppSettings settings) =>
         Task.FromResult(Start(vm, settings.RiscvEmuDir));
 
-    public Task<ShutdownResult> ShutdownAsync(VmConfig vm, AppSettings settings) =>
+    public Task<ShutdownResult> ShutdownAsync(EnvironmentConfig vm, AppSettings settings) =>
         ShutdownGracefullyAsync(vm, TimeSpan.FromSeconds(Math.Max(1, settings.RiscvShutdownTimeoutSeconds)));
 
     /// <summary>No QMP-equivalent control channel exists for this engine -
     /// always null, regardless of run state.</summary>
-    public Task<string?> GetGuestDetailAsync(VmConfig vm) => Task.FromResult<string?>(null);
+    public Task<string?> GetGuestDetailAsync(EnvironmentConfig vm) => Task.FromResult<string?>(null);
 
     /// <summary>Always Stream while running - riscv-emu's guest UART is
     /// the only display this engine has ever had.</summary>
-    public (ConsoleAvailability kind, string? detail) GetConsoleAvailability(VmConfig vm) =>
+    public (ConsoleAvailability kind, string? detail) GetConsoleAvailability(EnvironmentConfig vm) =>
         IsRunning(vm.Id) ? (ConsoleAvailability.Stream, null) : (ConsoleAvailability.NotRunning, null);
 
-    public VmHardwareDescription GetHardwareDescription(VmConfig vm)
+    public VmHardwareDescription GetHardwareDescription(EnvironmentConfig vm)
     {
-        var disk = string.IsNullOrWhiteSpace(vm.DiskPath) ? "None" : $"{vm.DiskPath} (virtio-blk)";
-        var network = vm.NetworkMode == "user" ? "virtio-net (user-mode NAT)" : "None";
+        var disk = string.IsNullOrWhiteSpace(vm.Workload.DiskPath) ? "None" : $"{vm.Workload.DiskPath} (virtio-blk)";
+        var network = vm.Platform.NetworkMode == "user" ? "virtio-net (user-mode NAT)" : "None";
         return new VmHardwareDescription(
             EngineDisplayName: DisplayName,
             Architecture: "riscv64",
             CpuDescription: "1 hart (fixed - no SMP yet)",
-            MemoryDescription: $"{vm.MemoryMB} MB",
+            MemoryDescription: $"{vm.Platform.MemoryMB} MB",
             DiskDescription: disk,
             NetworkDescription: network,
             ConsoleDescription: "Serial (UART)",
@@ -126,7 +170,7 @@ public class RiscvEmuProcessManager : IEngine
     /// IsRunning already uses for VmRunState.Stopping.</summary>
     public bool IsRunning(string vmId) => GetState(vmId) is RiscvEmuRunState.Running or RiscvEmuRunState.Stopping;
 
-    public string Start(VmConfig vm, string riscvEmuDir)
+    public string Start(EnvironmentConfig vm, string riscvEmuDir)
     {
         if (IsRunning(vm.Id)) return "Already running.";
 
@@ -265,7 +309,7 @@ public class RiscvEmuProcessManager : IEngine
         catch { return null; }
     }
 
-    /// <summary>Types VmConfig.ShutdownCommand at the guest's own console
+    /// <summary>Types Workload.ShutdownCommand at the guest's own console
     /// and waits (up to <paramref name="timeout"/>) for the real
     /// riscv-emu.exe process to exit on its own in response - a real
     /// shutdown, not a kill. Does NOT force-stop anything itself, on
@@ -283,7 +327,7 @@ public class RiscvEmuProcessManager : IEngine
     /// QEMU) - IsRunning stays true throughout, so Force Stop (and
     /// anything else gated on "is this VM running") keeps working
     /// normally while this is in progress.</summary>
-    public async Task<ShutdownResult> ShutdownGracefullyAsync(VmConfig vm, TimeSpan timeout)
+    public async Task<ShutdownResult> ShutdownGracefullyAsync(EnvironmentConfig vm, TimeSpan timeout)
     {
         if (!_running.TryGetValue(vm.Id, out var running) || running.Process.HasExited)
             return new ShutdownResult("Not running.", false);
@@ -291,7 +335,7 @@ public class RiscvEmuProcessManager : IEngine
         running.State = RiscvEmuRunState.Stopping;
         StateChanged?.Invoke();
 
-        SendInput(vm.Id, Encoding.UTF8.GetBytes(vm.ShutdownCommand + "\n"));
+        SendInput(vm.Id, Encoding.UTF8.GetBytes(vm.Workload.ShutdownCommand + "\n"));
 
         try
         {
@@ -315,7 +359,7 @@ public class RiscvEmuProcessManager : IEngine
                 current.State = RiscvEmuRunState.Running;
                 StateChanged?.Invoke();
             }
-            return new ShutdownResult($"Guest did not shut down within {timeout.TotalSeconds:0}s of \"{vm.ShutdownCommand}\".", true);
+            return new ShutdownResult($"Guest did not shut down within {timeout.TotalSeconds:0}s of \"{vm.Workload.ShutdownCommand}\".", true);
         }
     }
 
@@ -324,7 +368,7 @@ public class RiscvEmuProcessManager : IEngine
     /// chance to shut down on its own first, see ShutdownGracefullyAsync;
     /// this is what that offers as a fallback once its own wait times
     /// out, and what it stays otherwise unless explicitly called.</summary>
-    public string ForceStop(VmConfig vm)
+    public string ForceStop(EnvironmentConfig vm)
     {
         if (!_running.TryGetValue(vm.Id, out var running)) return "Not running.";
         try
@@ -356,7 +400,7 @@ public class RiscvEmuProcessManager : IEngine
     /// VmProcessManager's reattached VMs don't: the original process's
     /// stdio pipes belonged to the app instance that started it, not this
     /// one.</summary>
-    public bool TryReattach(VmConfig vm)
+    public bool TryReattach(EnvironmentConfig vm)
     {
         if (IsRunning(vm.Id)) return true;
 

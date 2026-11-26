@@ -8,7 +8,7 @@ namespace QemuManager.Models;
 /// not the old free-text "Recent Tasks" line it replaces.
 ///
 /// Status is a plain string ("Running"/"Succeeded"/"Failed"), not a C#
-/// enum - same convention VmConfig.Kind already uses for anything that
+/// enum - same convention EnvironmentConfig.EngineId already uses for anything that
 /// crosses the JSON persistence boundary, deliberately: a plain string
 /// round-trips exactly as written and reads back the same in the raw
 /// tasks.json file, where a numeric enum ordinal would not.</summary>

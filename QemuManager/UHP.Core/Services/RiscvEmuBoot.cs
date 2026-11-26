@@ -21,7 +21,7 @@ public static class RiscvEmuBoot
         public required List<string> Arguments { get; init; }
     }
 
-    public static BuildResult Build(VmConfig vm, string riscvEmuDir)
+    public static BuildResult Build(EnvironmentConfig vm, string riscvEmuDir)
     {
         if (!RiscvEmuLocator.LooksLikeRiscvEmuDir(riscvEmuDir))
             throw new InvalidOperationException($"riscv-emu.exe or its boot/firmware.bin was not found in '{riscvEmuDir}'.");
@@ -29,13 +29,13 @@ public static class RiscvEmuBoot
         var args = new List<string>
         {
             "--firmware", RiscvEmuLocator.FirmwarePath(riscvEmuDir),
-            "--kernel", vm.KernelPath,
+            "--kernel", vm.Workload.KernelPath,
         };
-        if (!string.IsNullOrWhiteSpace(vm.InitrdPath)) { args.Add("--initrd"); args.Add(vm.InitrdPath); }
-        if (!string.IsNullOrWhiteSpace(vm.ExtraArgs)) { args.Add("--append"); args.Add(vm.ExtraArgs.Trim()); }
-        if (!string.IsNullOrWhiteSpace(vm.DiskPath)) { args.Add("--disk"); args.Add(vm.DiskPath); }
-        if (vm.NetworkMode == "user") args.Add("--net");
-        if (vm.MemoryMB > 0) { args.Add("--mem"); args.Add(((ulong)vm.MemoryMB * 1024UL * 1024UL).ToString()); }
+        if (!string.IsNullOrWhiteSpace(vm.Workload.InitrdPath)) { args.Add("--initrd"); args.Add(vm.Workload.InitrdPath); }
+        if (!string.IsNullOrWhiteSpace(vm.Workload.ExtraArgs)) { args.Add("--append"); args.Add(vm.Workload.ExtraArgs.Trim()); }
+        if (!string.IsNullOrWhiteSpace(vm.Workload.DiskPath)) { args.Add("--disk"); args.Add(vm.Workload.DiskPath); }
+        if (vm.Platform.NetworkMode == "user") args.Add("--net");
+        if (vm.Platform.MemoryMB > 0) { args.Add("--mem"); args.Add(((ulong)vm.Platform.MemoryMB * 1024UL * 1024UL).ToString()); }
         // Run until the guest halts itself or the user stops it, not until
         // an arbitrary instruction cap - unlike a `make compare` test run,
         // there is no self-terminating guest program to expect here.

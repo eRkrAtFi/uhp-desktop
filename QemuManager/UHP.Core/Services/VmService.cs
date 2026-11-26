@@ -13,29 +13,31 @@ namespace QemuManager.Services;
 /// different engines - everything above this (the WPF app today; a web API
 /// or CLI tomorrow) talks to <see cref="IVmService"/> instead. See that
 /// interface's own remarks for the overall shape. Also the only place that
-/// still touches <see cref="VmStore"/> directly - the UI holds a list of
-/// VmConfig it got from <see cref="LoadAll"/>, not a VmStore of its own.
+/// still touches <see cref="EnvironmentStore"/> directly - the UI holds a
+/// list of EnvironmentConfig it got from <see cref="LoadAll"/>, not an
+/// EnvironmentStore of its own.
 /// </summary>
 public class VmService : IVmService, IDisposable
 {
-    private readonly VmStore _store = new();
+    private readonly EnvironmentStore _store = new();
     private readonly VmProcessManager _qemu = new();
     private readonly RiscvEmuProcessManager _riscv = new();
 
     // The one place a new engine gets registered (see
     // vision/VISION.md's roadmap item 5) - everything below looks an
-    // engine up here by VmConfig instead of branching on VmConfig.Kind
-    // itself. _qemu/_riscv stay as typed fields (not just entries in
-    // _engines) only because a couple of things below are genuinely
-    // engine-specific rather than part of IEngine's own common surface
-    // (riscv-emu's own StatsReceived/MIPS signal - no other engine has
-    // anything like it, and IEngine does not need to pretend otherwise).
+    // engine up here by EnvironmentConfig instead of branching on
+    // EnvironmentConfig.EngineId itself. _qemu/_riscv stay as typed fields
+    // (not just entries in _engines) only because a couple of things
+    // below are genuinely engine-specific rather than part of IEngine's
+    // own common surface (riscv-emu's own StatsReceived/MIPS signal - no
+    // other engine has anything like it, and IEngine does not need to
+    // pretend otherwise).
     private readonly EngineRegistry _engines;
 
     // The configs this instance knows about - populated by LoadAll, kept in
     // sync by Save/Delete - so the stats timer below has something to poll
     // without the UI having to hand it a list every tick.
-    private readonly List<VmConfig> _configs = new();
+    private readonly List<EnvironmentConfig> _configs = new();
     private readonly object _configsLock = new();
 
     // riscv-emu's own "riscv-emu: stats ..." line can arrive many times a
@@ -143,7 +145,7 @@ public class VmService : IVmService, IDisposable
     /// "história v jadre" - Core's own history, not the WPF layer's).</summary>
     private void DetectUnexpectedStop()
     {
-        VmConfig[] snapshot;
+        EnvironmentConfig[] snapshot;
         lock (_configsLock) snapshot = _configs.ToArray();
         foreach (var vm in snapshot)
         {
@@ -272,7 +274,7 @@ public class VmService : IVmService, IDisposable
 
     public event Action<string, VmStats>? StatsReceived;
 
-    public IReadOnlyList<VmConfig> LoadAll()
+    public IReadOnlyList<EnvironmentConfig> LoadAll()
     {
         var loaded = _store.LoadAll();
         foreach (var vm in loaded) TryReattach(vm);
@@ -280,25 +282,31 @@ public class VmService : IVmService, IDisposable
         return loaded;
     }
 
-    public void Save(VmConfig vm)
+    public void Save(EnvironmentConfig vm)
     {
         _store.Save(vm);
         lock (_configsLock) { if (!_configs.Any(c => c.Id == vm.Id)) _configs.Add(vm); }
     }
 
-    public void Delete(VmConfig vm)
+    public void Delete(EnvironmentConfig vm)
     {
         _store.Delete(vm);
         lock (_configsLock) { _configs.RemoveAll(c => c.Id == vm.Id); }
     }
 
-    public VmConfig CreateDraft(string kind) => _engines.Get(kind).CreateDraft();
+    public EnvironmentConfig CreateDraft(string kind) => _engines.Get(kind).CreateDraft();
 
-    public VmState GetState(VmConfig vm) => _engines.GetFor(vm).GetVmState(vm.Id);
+    public IReadOnlyList<ConfigField> GetConfigSchema(string engineId) => _engines.Get(engineId).GetConfigSchema();
 
-    public bool IsRunning(VmConfig vm) => _engines.GetFor(vm).IsRunning(vm.Id);
+    public IReadOnlyList<string> ListArchitectures(string engineId, AppSettings settings) => _engines.Get(engineId).ListArchitectures(settings);
 
-    public VmSnapshot GetSnapshot(VmConfig vm)
+    public EngineCapabilities GetCapabilities(string engineId) => _engines.Get(engineId).Capabilities;
+
+    public VmState GetState(EnvironmentConfig vm) => _engines.GetFor(vm).GetVmState(vm.Id);
+
+    public bool IsRunning(EnvironmentConfig vm) => _engines.GetFor(vm).IsRunning(vm.Id);
+
+    public VmSnapshot GetSnapshot(EnvironmentConfig vm)
     {
         var engine = _engines.GetFor(vm);
         var usage = engine.GetResourceUsage(vm.Id);
@@ -306,11 +314,11 @@ public class VmService : IVmService, IDisposable
         return new VmSnapshot(GetState(vm), usage?.cpuPercent ?? 0, usage?.memoryBytes ?? 0, uptime);
     }
 
-    public Task<string?> GetGuestDetailAsync(VmConfig vm) => _engines.GetFor(vm).GetGuestDetailAsync(vm);
+    public Task<string?> GetGuestDetailAsync(EnvironmentConfig vm) => _engines.GetFor(vm).GetGuestDetailAsync(vm);
 
-    public VmHardwareDescription GetHardwareDescription(VmConfig vm) => _engines.GetFor(vm).GetHardwareDescription(vm);
+    public VmHardwareDescription GetHardwareDescription(EnvironmentConfig vm) => _engines.GetFor(vm).GetHardwareDescription(vm);
 
-    public async Task<string> StartAsync(VmConfig vm, AppSettings settings)
+    public async Task<string> StartAsync(EnvironmentConfig vm, AppSettings settings)
     {
         // One action at a time per VM, not just "don't let Power On race
         // itself": Power On/Shut Down/Force Stop/Delete all end up calling
@@ -350,7 +358,7 @@ public class VmService : IVmService, IDisposable
         finally { EndAction(vm.Id); }
     }
 
-    public async Task<ShutdownResult> ShutdownAsync(VmConfig vm, AppSettings settings)
+    public async Task<ShutdownResult> ShutdownAsync(EnvironmentConfig vm, AppSettings settings)
     {
         if (!TryBeginAction(vm.Id)) return new ShutdownResult("Another action is already in progress for this VM.", false);
         var taskId = _history.BeginTask("Shut Down", vm.Name);
@@ -369,7 +377,7 @@ public class VmService : IVmService, IDisposable
         finally { EndAction(vm.Id); }
     }
 
-    public string ForceStop(VmConfig vm)
+    public string ForceStop(EnvironmentConfig vm)
     {
         if (!TryBeginAction(vm.Id)) return "Another action is already in progress for this VM.";
         try
@@ -408,17 +416,17 @@ public class VmService : IVmService, IDisposable
         foreach (var engine in _engines.All) engine.SendInput(vmId, data);
     }
 
-    public (ConsoleAvailability kind, string? detail) GetConsoleAvailability(VmConfig vm) =>
+    public (ConsoleAvailability kind, string? detail) GetConsoleAvailability(EnvironmentConfig vm) =>
         _engines.GetFor(vm).GetConsoleAvailability(vm);
 
-    public bool TryReattach(VmConfig vm) => _engines.GetFor(vm).TryReattach(vm);
+    public bool TryReattach(EnvironmentConfig vm) => _engines.GetFor(vm).TryReattach(vm);
 
     private async Task PollStatsAsync()
     {
         if (Interlocked.Exchange(ref _polling, 1) == 1) return; // previous tick still running (e.g. a slow QMP round trip) - skip rather than overlap
         try
         {
-            VmConfig[] snapshot;
+            EnvironmentConfig[] snapshot;
             lock (_configsLock) snapshot = _configs.ToArray();
 
             foreach (var vm in snapshot)

@@ -22,7 +22,7 @@ namespace QemuManager;
 /// </summary>
 public partial class ConsoleWindow : Window
 {
-    private readonly VmConfig _vm;
+    private readonly EnvironmentConfig _vm;
     private readonly IVmService _source;
 
     // IVmService, not just IConsoleSource - the one extra thing this
@@ -33,12 +33,12 @@ public partial class ConsoleWindow : Window
     // gone for good - see VmService.GetConsoleBuffer's own remarks).
     // Safe to require the wider interface: the only real caller
     // (MainWindow.OpenConsoleWindow) already has one and passes it.
-    public ConsoleWindow(VmConfig vm, IVmService source)
+    public ConsoleWindow(EnvironmentConfig vm, IVmService source)
     {
         InitializeComponent();
         _vm = vm;
         _source = source;
-        var engine = vm.Kind == "RiscvEmu" ? "riscv-emu" : "QEMU";
+        var engine = vm.EngineId == "RiscvEmu" ? "riscv-emu" : "QEMU";
         TitleText.Text = $"{engine} - {vm.Name}";
         Title = $"{engine} console - {vm.Name}";
 
@@ -48,7 +48,7 @@ public partial class ConsoleWindow : Window
         Loaded += async (_, _) =>
         {
             await Terminal.InitializeAsync();
-            Terminal.Attach(_source, _vm.Id, _source.GetConsoleBuffer(_vm.Id), _vm.EnterSends);
+            Terminal.Attach(_source, _vm.Id, _source.GetConsoleBuffer(_vm.Id), _vm.Debug.EnterSends);
         };
         // Phase 5: this window no longer closes itself when the VM stops
         // (TerminalControl shows a "VM stopped" banner instead, output

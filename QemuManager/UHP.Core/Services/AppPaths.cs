@@ -38,6 +38,13 @@ public static class AppPaths
 
     public static string VmsDir { get; } = Path.Combine(AppDataDir, "vms");
 
+    /// <summary>Where EnvironmentStore.LoadAll backs up a VM config file's
+    /// original, pre-migration bytes before overwriting it with the
+    /// migrated EnvironmentConfig shape - one per config, same filename,
+    /// so the exact old JSON is always recoverable rather than only ever
+    /// trusting the migration to have been lossless.</summary>
+    public static string VmsMigrationBackupDir { get; } = Path.Combine(AppDataDir, "vms-pre-migration-backup");
+
     /// <summary>Sidecar runtime-state files (see RuntimeStateStore) - one per
     /// currently-running VM, separate from the VM's own persisted config.</summary>
     public static string RuntimeDir { get; } = Path.Combine(AppDataDir, "run");
@@ -103,7 +110,7 @@ public static class AppPaths
     /// like this, and having import copy only VM configs (see
     /// ImportLegacyConfigs), fixes both: nothing happens without the user
     /// choosing it, and what does happen is small and fast regardless of
-    /// how large any attached disk images are - their VmConfig.DiskPath
+    /// how large any attached disk images are - their Workload.DiskPath
     /// is an absolute path already pointing at the original files in
     /// their old location, untouched by copying only the JSON that
     /// contains it.</summary>
@@ -128,7 +135,7 @@ public static class AppPaths
     /// %APPDATA%\QemuManager into the portable "data" folder - deliberately
     /// never disks/, logs/, or run/ (runtime/process state that only ever
     /// makes sense for the install that wrote it). Returns how many VM
-    /// configs were copied. Each copied VmConfig's own DiskPath is left
+    /// configs were copied. Each copied Environment.s own Workload.DiskPath is left
     /// exactly as saved - still an absolute path into the *old* location -
     /// so the imported VM keeps working without this needing to move or
     /// even touch the disk image itself.</summary>

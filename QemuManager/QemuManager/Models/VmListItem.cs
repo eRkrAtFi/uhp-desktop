@@ -8,33 +8,35 @@ using Color = System.Windows.Media.Color;
 
 namespace QemuManager.Models;
 
-/// <summary>Wraps a <see cref="VmConfig"/> for the main window's grid,
-/// adding the live status/resource-usage state that the config itself has
-/// no business storing. This is a WPF view model, not a Core type - it is
-/// the one place <see cref="VmState"/> (a plain Core enum, no color baked
-/// in) gets turned into a <see cref="Brush"/> for the status dot; Core
-/// itself never mentions WPF or any particular color. Likewise Architecture/
-/// CpuCores/Accelerator below are no longer this class's own
-/// Kind == "RiscvEmu" ternaries - they read IVmService.GetHardwareDescription,
-/// the same engine-aware hardware facts Phase 3's "Hardware" card will bind
-/// to directly via the Hardware property.</summary>
+/// <summary>Wraps an <see cref="EnvironmentConfig"/> for the main window's
+/// grid, adding the live status/resource-usage state that the config
+/// itself has no business storing. This is a WPF view model, not a Core
+/// type - it is the one place <see cref="VmState"/> (a plain Core enum, no
+/// color baked in) gets turned into a <see cref="Brush"/> for the status
+/// dot; Core itself never mentions WPF or any particular color. Likewise
+/// Architecture/CpuCores/Accelerator below are no longer this class's own
+/// EngineId == "RiscvEmu" ternaries - they read
+/// IVmService.GetHardwareDescription, the same engine-aware hardware facts
+/// Phase 3's "Hardware" card will bind to directly via the Hardware
+/// property.</summary>
 public class VmListItem : INotifyPropertyChanged
 {
     private readonly IVmService _vmService;
 
-    public VmConfig Config { get; }
+    public EnvironmentConfig Config { get; }
 
-    public VmListItem(VmConfig config, IVmService vmService)
+    public VmListItem(EnvironmentConfig config, IVmService vmService)
     {
         Config = config;
         _vmService = vmService;
     }
 
     public string Name => Config.Name;
-    /// <summary>Raw VmConfig.Kind ("Qemu"/"RiscvEmu") - used for filtering
-    /// and for deciding which edit dialog to open, never shown as-is;
-    /// Engine below is the display label for the grid.</summary>
-    public string Kind => Config.Kind;
+    /// <summary>Raw EnvironmentConfig.EngineId ("Qemu"/"RiscvEmu") - used
+    /// for filtering and for deciding which engine's config schema to
+    /// edit, never shown as-is; Engine below is the display label for the
+    /// grid.</summary>
+    public string Kind => Config.EngineId;
     public string Engine => Hardware.EngineDisplayName;
 
     /// <summary>Full hardware description (CPU, memory, disk, network,
@@ -45,12 +47,12 @@ public class VmListItem : INotifyPropertyChanged
     public VmHardwareDescription Hardware => _vmService.GetHardwareDescription(Config);
 
     public string Architecture => Hardware.Architecture;
-    public string MemoryMB => Config.MemoryMB.ToString();
+    public string MemoryMB => Config.Platform.MemoryMB.ToString();
     public string CpuCores => Hardware.CpuDescription;
     public string Accelerator => Hardware.AcceleratorDescription;
 
     /// <summary>The "General" card's own two fields that are plain
-    /// VmConfig facts, not anything IVmService needs to compute - local
+    /// EnvironmentConfig facts, not anything IVmService needs to compute - local
     /// time, not UTC, matching how every other timestamp-ish thing in
     /// this app (Recent Tasks' own entries) is already displayed.</summary>
     public string CreatedText => Config.CreatedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm");

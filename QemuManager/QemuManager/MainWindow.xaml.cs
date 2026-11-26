@@ -200,17 +200,11 @@ public partial class MainWindow : Window
 
     private void NewButton_Click(object sender, RoutedEventArgs e)
     {
-        var kindDialog = new NewVmKindWindow { Owner = this };
+        var kindDialog = new NewEnvironmentWindow { Owner = this };
         if (kindDialog.ShowDialog() != true) return;
 
-        var vm = _vmService.CreateDraft(kindDialog.SelectedKind);
-        // Which edit window to show is a UI-only decision (RiscvEmuEditWindow
-        // and VmEditWindow are both WPF Window types, so this can never move
-        // into Core) - not an engine-operation branch like the ones this
-        // refactor removed.
-        bool? result = kindDialog.SelectedKind == "RiscvEmu"
-            ? new RiscvEmuEditWindow(vm) { Owner = this }.ShowDialog()
-            : new VmEditWindow(vm, _settings.QemuDir, _vmService) { Owner = this }.ShowDialog();
+        var vm = _vmService.CreateDraft(kindDialog.SelectedEngineId);
+        bool? result = new EnvironmentEditWindow(vm, _settings, _vmService) { Owner = this }.ShowDialog();
 
         if (result == true)
         {
@@ -231,9 +225,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        bool? result = item.Config.Kind == "RiscvEmu"
-            ? new RiscvEmuEditWindow(item.Config) { Owner = this }.ShowDialog()
-            : new VmEditWindow(item.Config, _settings.QemuDir, _vmService) { Owner = this }.ShowDialog();
+        bool? result = new EnvironmentEditWindow(item.Config, _settings, _vmService) { Owner = this }.ShowDialog();
 
         if (result == true)
         {
@@ -363,7 +355,7 @@ public partial class MainWindow : Window
     /// already guarantee that by itself - TryBeginConsoleSession is a real
     /// second, Core-level guard underneath it, not a cosmetic one; see
     /// VmService's own remarks for why it exists regardless.</summary>
-    private void OpenConsoleWindow(VmConfig vm)
+    private void OpenConsoleWindow(EnvironmentConfig vm)
     {
         if (_consoleWindows.TryGetValue(vm.Id, out var existing))
         {
@@ -608,7 +600,7 @@ public partial class MainWindow : Window
             // OutputReceived keeps it live on its own, not tied to the
             // ~2s stats cadence at all.
             RedrawCpuHistory(selectedVm.Config.Id);
-            ConsolePreviewTerminal.Attach(_vmService, selectedVm.Config.Id, _vmService.GetConsoleBuffer(selectedVm.Config.Id), selectedVm.Config.EnterSends);
+            ConsolePreviewTerminal.Attach(_vmService, selectedVm.Config.Id, _vmService.GetConsoleBuffer(selectedVm.Config.Id), selectedVm.Config.Debug.EnterSends);
         }
         HostPage.Visibility = tag == "Host" ? Visibility.Visible : Visibility.Collapsed;
         EnginesPage.Visibility = tag == "Engines" ? Visibility.Visible : Visibility.Collapsed;

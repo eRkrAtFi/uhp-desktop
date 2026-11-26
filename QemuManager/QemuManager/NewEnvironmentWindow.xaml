@@ -1,0 +1,40 @@
+<Window x:Class="QemuManager.NewEnvironmentWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="New Environment" SizeToContent="Height" Width="420" WindowStartupLocation="CenterOwner"
+        Background="{StaticResource WindowBg}" ResizeMode="NoResize">
+    <Window.Resources>
+        <!-- Just this window's own tweak to the shared Button style
+             (App.xaml) - bigger, left-aligned, stacked vertically instead
+             of the shared style's default compact/centered toolbar look. -->
+        <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Padding" Value="12,10"/>
+            <Setter Property="Margin" Value="0,0,0,10"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+        </Style>
+    </Window.Resources>
+    <StackPanel Margin="16">
+        <TextBlock Text="What do you want to run?" Margin="0,0,0,12" FontWeight="Bold"/>
+
+        <!-- Only templates for engines this app can actually run today -
+             see vision/VISION.md's own full template list (Operating
+             System, Firmware, Kernel / Bootloader, Bare-metal / Embedded,
+             Custom) and vision/NEXT.md for exactly why "Bare-metal /
+             Embedded" is not offered yet. -->
+        <Button x:Name="OperatingSystemButton" Click="OperatingSystemButton_Click" AutomationProperties.Name="New Operating System environment">
+            <StackPanel>
+                <TextBlock Text="Operating System" FontWeight="Bold"/>
+                <TextBlock Text="A real virtual machine driven by qemu-system-*.exe - any architecture, any OS, a disk or CD-ROM to boot from." FontSize="11" Opacity="0.8" TextWrapping="Wrap"/>
+            </StackPanel>
+        </Button>
+
+        <Button x:Name="KernelBootloaderButton" Click="KernelBootloaderButton_Click" AutomationProperties.Name="New Kernel / Bootloader environment">
+            <StackPanel>
+                <TextBlock Text="Kernel / Bootloader" FontWeight="Bold"/>
+                <TextBlock Text="This project's own hand-written RISC-V emulator (riscv-emu) - boots a riscv64 Linux Image + initramfs directly, no disk required." FontSize="11" Opacity="0.8" TextWrapping="Wrap"/>
+            </StackPanel>
+        </Button>
+
+        <Button x:Name="CancelButton" Content="Cancel" Click="CancelButton_Click" HorizontalContentAlignment="Center"/>
+    </StackPanel>
+</Window>

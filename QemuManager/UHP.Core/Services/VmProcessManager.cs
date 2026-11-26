@@ -47,11 +47,11 @@ public class RunningVm
 }
 
 /// <summary>
-/// Turns a <see cref="VmConfig"/> into a qemu-system-&lt;arch&gt;.exe process and
-/// keeps track of every VM this app instance started. QEMU is the actual
-/// virtualization engine here; this class only ever builds its command line,
-/// launches it, and talks to it over QMP (see <see cref="QmpClient"/>) -
-/// it does not emulate anything itself.
+/// Turns an <see cref="EnvironmentConfig"/> into a qemu-system-&lt;arch&gt;.exe
+/// process and keeps track of every one this app instance started. QEMU is
+/// the actual virtualization engine here; this class only ever builds its
+/// command line, launches it, and talks to it over QMP (see
+/// <see cref="QmpClient"/>) - it does not emulate anything itself.
 /// </summary>
 public class VmProcessManager : IEngine
 {
@@ -61,14 +61,72 @@ public class VmProcessManager : IEngine
 
     // --- IEngine (vision/VISION.md roadmap item 1) - additive: every
     // member below is new surface for VmService to reach this engine
-    // through without branching on VmConfig.Kind itself. Nothing already
-    // public above changes signature or behavior. ---
+    // through without branching on EnvironmentConfig.EngineId itself.
+    // Nothing already public above changes signature or behavior. ---
 
     public string Id => "Qemu";
     public string DisplayName => "QEMU";
-    public bool CanHandle(VmConfig vm) => vm.Kind == Id;
 
-    public VmConfig CreateDraft() => new() { Kind = Id };
+    public EngineCapabilities Capabilities { get; } = new(
+        SupportsMultipleDisplayModes: true,
+        SupportsDisk: true,
+        SupportsCdrom: true,
+        SupportsKernelBoot: false,
+        SupportsMachineType: true,
+        SupportsFirmware: true,
+        SupportsNetwork: true,
+        SupportsSmp: true,
+        SupportsGuestDetail: true,
+        SupportsSpeedMetric: false);
+
+    public bool CanHandle(EnvironmentConfig env) => env.EngineId == Id;
+
+    public EnvironmentConfig CreateDraft() => new() { EngineId = Id };
+
+    public IReadOnlyList<string> ListArchitectures(AppSettings settings) => QemuLocator.ListArchitectures(settings.QemuDir);
+
+    public IReadOnlyList<ConfigField> GetConfigSchema() => new List<ConfigField>
+    {
+        new() { Key = "Platform.Architecture", Label = "Architecture", Type = FieldType.Choice, Group = "Platform",
+            Get = e => e.Platform.Architecture, Set = (e, v) => e.Platform.Architecture = (string)v!, Required = true },
+        new() { Key = "Platform.MachineType", Label = "Machine type", Type = FieldType.Text, Group = "Platform",
+            Get = e => e.Platform.MachineType, Set = (e, v) => e.Platform.MachineType = (string)v!,
+            Hint = "QEMU's -M/-machine value, e.g. \"virt\". Empty lets QEMU pick its own default - several architectures (aarch64/arm/riscv*) have none and need this set explicitly." },
+        new() { Key = "Platform.MemoryMB", Label = "Memory (MB)", Type = FieldType.Int, Group = "Platform",
+            Get = e => e.Platform.MemoryMB, Set = (e, v) => e.Platform.MemoryMB = (int)v!, Required = true,
+            Validate = v => (int)v! >= 16 ? null : "Memory must be a number of MB, at least 16." },
+        new() { Key = "Platform.CpuCores", Label = "CPU cores", Type = FieldType.Int, Group = "Platform",
+            Get = e => e.Platform.CpuCores, Set = (e, v) => e.Platform.CpuCores = (int)v!, Required = true,
+            Validate = v => (int)v! >= 1 ? null : "CPU cores must be a positive whole number." },
+        new() { Key = "Platform.Accelerator", Label = "Accelerator", Type = FieldType.Choice, Group = "Platform",
+            Get = e => e.Platform.Accelerator, Set = (e, v) => e.Platform.Accelerator = (string)v!,
+            Choices = new[] { "tcg", "whpx" },
+            Hint = "tcg (software, always works) or whpx (hardware, needs Windows Hypervisor Platform)." },
+        new() { Key = "Platform.NetworkMode", Label = "Network", Type = FieldType.Choice, Group = "Platform",
+            Get = e => e.Platform.NetworkMode, Set = (e, v) => e.Platform.NetworkMode = (string)v!,
+            Choices = new[] { "user", "none" } },
+        new() { Key = "Firmware.FirmwarePath", Label = "Firmware / BIOS", Type = FieldType.FilePath, Group = "Firmware",
+            Get = e => e.Firmware.FirmwarePath, Set = (e, v) => e.Firmware.FirmwarePath = (string)v!,
+            FileFilter = "Firmware/BIOS images (*.fd;*.bin;*.rom;*.elf)|*.fd;*.bin;*.rom;*.elf|All files (*.*)|*.*" },
+        new() { Key = "Workload.DiskPath", Label = "Disk image", Type = FieldType.FilePath, Group = "Workload",
+            Get = e => e.Workload.DiskPath, Set = (e, v) => e.Workload.DiskPath = (string)v!,
+            FileFilter = "Disk images (*.qcow2;*.img;*.raw;*.vmdk;*.vdi;*.vhdx)|*.qcow2;*.img;*.raw;*.vmdk;*.vdi;*.vhdx|All files (*.*)|*.*" },
+        new() { Key = "Workload.CdromPath", Label = "CD-ROM / ISO", Type = FieldType.FilePath, Group = "Workload",
+            Get = e => e.Workload.CdromPath, Set = (e, v) => e.Workload.CdromPath = (string)v!,
+            FileFilter = "ISO images (*.iso)|*.iso|All files (*.*)|*.*" },
+        new() { Key = "Workload.BootOrder", Label = "Boot order", Type = FieldType.Text, Group = "Workload",
+            Get = e => e.Workload.BootOrder, Set = (e, v) => e.Workload.BootOrder = (string)v!,
+            Hint = "c = disk first, d = CD-ROM first, n = network" },
+        new() { Key = "Workload.ExtraArgs", Label = "Extra arguments", Type = FieldType.MultilineText, Group = "Workload",
+            Get = e => e.Workload.ExtraArgs, Set = (e, v) => e.Workload.ExtraArgs = (string)v! },
+        new() { Key = "Debug.Display", Label = "Display backend", Type = FieldType.Choice, Group = "Debug",
+            Get = e => e.Debug.Display, Set = (e, v) => e.Debug.Display = (string)v!,
+            Choices = new[] { "gtk", "sdl", "console", "vnc" } },
+        new() { Key = "Debug.EnterSends", Label = "Enter sends", Type = FieldType.Choice, Group = "Debug",
+            Get = e => e.Debug.EnterSends, Set = (e, v) => e.Debug.EnterSends = (string)v!,
+            Choices = new[] { "CR", "LF", "CRLF" },
+            Hint = "Only matters with Display set to \"console\". Change this only if Enter in the console does not submit a line - most guests need no change." },
+    };
 
     public VmState GetVmState(string vmId) => GetState(vmId) switch
     {
@@ -78,48 +136,48 @@ public class VmProcessManager : IEngine
         _ => VmState.Stopped,
     };
 
-    public async Task<string> StartAsync(VmConfig vm, AppSettings settings) =>
-        await StartAsync(vm, settings.QemuDir);
+    public async Task<string> StartAsync(EnvironmentConfig env, AppSettings settings) =>
+        await StartAsync(env, settings.QemuDir);
 
-    public async Task<ShutdownResult> ShutdownAsync(VmConfig vm, AppSettings settings) =>
-        new ShutdownResult(await StopGracefullyAsync(vm), false);
+    public async Task<ShutdownResult> ShutdownAsync(EnvironmentConfig env, AppSettings settings) =>
+        new ShutdownResult(await StopGracefullyAsync(env), false);
 
     /// <summary>riscv-emu has no QMP-equivalent control channel to ask -
     /// this is the one engine-specific gap IEngine's own doc comment
     /// calls out by name; here, QEMU's own answer.</summary>
-    public async Task<string?> GetGuestDetailAsync(VmConfig vm)
+    public async Task<string?> GetGuestDetailAsync(EnvironmentConfig env)
     {
-        if (GetState(vm.Id) != VmRunState.Running) return null;
-        return await QueryGuestStatusAsync(vm);
+        if (GetState(env.Id) != VmRunState.Running) return null;
+        return await QueryGuestStatusAsync(env);
     }
 
-    public (ConsoleAvailability kind, string? detail) GetConsoleAvailability(VmConfig vm)
+    public (ConsoleAvailability kind, string? detail) GetConsoleAvailability(EnvironmentConfig env)
     {
-        if (!IsRunning(vm.Id)) return (ConsoleAvailability.NotRunning, null);
-        if (vm.Display == "vnc") return (ConsoleAvailability.Vnc, GetVncEndpoint(vm.Id));
-        if (vm.Display == "console") return (ConsoleAvailability.Stream, null);
+        if (!IsRunning(env.Id)) return (ConsoleAvailability.NotRunning, null);
+        if (env.Debug.Display == "vnc") return (ConsoleAvailability.Vnc, GetVncEndpoint(env.Id));
+        if (env.Debug.Display == "console") return (ConsoleAvailability.Stream, null);
         return (ConsoleAvailability.ExternalWindow, null);
     }
 
-    public VmHardwareDescription GetHardwareDescription(VmConfig vm)
+    public VmHardwareDescription GetHardwareDescription(EnvironmentConfig env)
     {
-        var disk = string.IsNullOrWhiteSpace(vm.DiskPath) ? "None" : vm.DiskPath;
-        var network = vm.NetworkMode == "user" ? "User-mode NAT" : "None";
-        var console = vm.Display switch
+        var disk = string.IsNullOrWhiteSpace(env.Workload.DiskPath) ? "None" : env.Workload.DiskPath;
+        var network = env.Platform.NetworkMode == "user" ? "User-mode NAT" : "None";
+        var console = env.Debug.Display switch
         {
             "console" => "Serial (text, in this app)",
             "vnc" => "VNC (headless)",
-            _ => $"{vm.Display} window (QEMU's own)",
+            _ => $"{env.Debug.Display} window (QEMU's own)",
         };
         return new VmHardwareDescription(
             EngineDisplayName: DisplayName,
-            Architecture: vm.Architecture,
-            CpuDescription: $"{vm.CpuCores} core{(vm.CpuCores == 1 ? "" : "s")}",
-            MemoryDescription: $"{vm.MemoryMB} MB",
+            Architecture: env.Platform.Architecture,
+            CpuDescription: $"{env.Platform.CpuCores} core{(env.Platform.CpuCores == 1 ? "" : "s")}",
+            MemoryDescription: $"{env.Platform.MemoryMB} MB",
             DiskDescription: disk,
             NetworkDescription: network,
             ConsoleDescription: console,
-            AcceleratorDescription: vm.Accelerator,
+            AcceleratorDescription: env.Platform.Accelerator,
             SupportsGuestDetail: true,
             SupportsSpeedMetric: false);
     }
@@ -136,23 +194,23 @@ public class VmProcessManager : IEngine
 
     public bool IsRunning(string vmId) => GetState(vmId) is VmRunState.Running or VmRunState.Starting or VmRunState.Stopping;
 
-    public async Task<string> StartAsync(VmConfig vm, string qemuDir)
+    public async Task<string> StartAsync(EnvironmentConfig vm, string qemuDir)
     {
         if (IsRunning(vm.Id)) return "VM is already running.";
 
-        var binary = QemuLocator.SystemBinaryFor(qemuDir, vm.Architecture);
+        var binary = QemuLocator.SystemBinaryFor(qemuDir, vm.Platform.Architecture);
         if (binary == null)
-            return $"No qemu-system-{vm.Architecture}.exe found in {qemuDir}.";
+            return $"No qemu-system-{vm.Platform.Architecture}.exe found in {qemuDir}.";
 
         var qmpPort = GetFreeTcpPort();
-        var consoleMode = vm.Display == "console";
+        var consoleMode = vm.Debug.Display == "console";
         // VNC display numbers are host-port-minus-5900 (QEMU's own
         // convention), not a port directly - picking a free TCP port first
         // and subtracting 5900 keeps this using the same no-collision
         // mechanism as qmpPort above instead of a second, different one.
         // GetFreeTcpPort's ephemeral-range ports (comfortably above 5900 on
         // Windows) keep that subtraction positive in practice.
-        var vncPort = vm.Display == "vnc" ? GetFreeTcpPort() : (int?)null;
+        var vncPort = vm.Debug.Display == "vnc" ? GetFreeTcpPort() : (int?)null;
         var args = BuildArguments(vm, qmpPort, vncPort);
 
         var psi = new ProcessStartInfo
@@ -233,7 +291,7 @@ public class VmProcessManager : IEngine
     /// the same signal a real power button sends. May be ignored by the
     /// guest or simply take a while - this call only waits briefly before
     /// returning, it does not wait for the process to exit.</summary>
-    public async Task<string> StopGracefullyAsync(VmConfig vm)
+    public async Task<string> StopGracefullyAsync(EnvironmentConfig vm)
     {
         if (!_running.TryGetValue(vm.Id, out var running)) return "VM is not running.";
 
@@ -373,7 +431,7 @@ public class VmProcessManager : IEngine
 
     /// <summary>Immediately ends the QEMU process. Equivalent to pulling the
     /// power cord: no guest-side shutdown happens.</summary>
-    public string ForceStop(VmConfig vm)
+    public string ForceStop(EnvironmentConfig vm)
     {
         if (!_running.TryGetValue(vm.Id, out var running)) return "VM is not running.";
         try
@@ -389,7 +447,7 @@ public class VmProcessManager : IEngine
 
     /// <summary>Live status straight from QEMU over QMP, not merely "the
     /// process is alive" - distinguishes running/paused/shutdown states.</summary>
-    public async Task<string> QueryGuestStatusAsync(VmConfig vm)
+    public async Task<string> QueryGuestStatusAsync(EnvironmentConfig vm)
     {
         if (!_running.TryGetValue(vm.Id, out var running)) return "stopped";
         try
@@ -432,7 +490,7 @@ public class VmProcessManager : IEngine
     /// again by this app. Stop/Force Stop/live QMP status all still work,
     /// since those only need the process handle and (for Qemu) the QMP
     /// port, both of which this reattaches correctly.</summary>
-    public bool TryReattach(VmConfig vm)
+    public bool TryReattach(EnvironmentConfig vm)
     {
         if (IsRunning(vm.Id)) return true;
 
@@ -519,36 +577,36 @@ public class VmProcessManager : IEngine
         return port;
     }
 
-    private static List<string> BuildArguments(VmConfig vm, int qmpPort, int? vncPort)
+    private static List<string> BuildArguments(EnvironmentConfig vm, int qmpPort, int? vncPort)
     {
         var args = new List<string>
         {
             "-name", vm.Name,
-            "-m", vm.MemoryMB.ToString(),
-            "-smp", vm.CpuCores.ToString(),
-            "-accel", vm.Accelerator,
+            "-m", vm.Platform.MemoryMB.ToString(),
+            "-smp", vm.Platform.CpuCores.ToString(),
+            "-accel", vm.Platform.Accelerator,
             "-qmp", $"tcp:127.0.0.1:{qmpPort},server,nowait",
-            "-boot", $"order={vm.BootOrder}",
+            "-boot", $"order={vm.Workload.BootOrder}",
         };
 
         // Several architectures have no usable default machine type/firmware
         // (aarch64/arm/riscv* in particular need -M explicitly to boot
-        // anything) - see VmConfig.MachineType/FirmwarePath and
+        // anything) - see Platform.MachineType/Firmware.FirmwarePath and
         // ARCHITECTURE_AUDIT.md's recommendation #3. Both are opt-in and
         // empty for every VM saved before these fields existed, so this
         // changes nothing for an x86_64 VM relying on QEMU's own default.
-        if (!string.IsNullOrWhiteSpace(vm.MachineType))
+        if (!string.IsNullOrWhiteSpace(vm.Platform.MachineType))
         {
             args.Add("-M");
-            args.Add(vm.MachineType);
+            args.Add(vm.Platform.MachineType);
         }
-        if (!string.IsNullOrWhiteSpace(vm.FirmwarePath))
+        if (!string.IsNullOrWhiteSpace(vm.Firmware.FirmwarePath))
         {
             args.Add("-bios");
-            args.Add(vm.FirmwarePath);
+            args.Add(vm.Firmware.FirmwarePath);
         }
 
-        if (vm.Display == "console")
+        if (vm.Debug.Display == "console")
         {
             // No gtk/sdl window at all - the guest's serial port (COM1)
             // becomes this process's own stdio, which ConsoleWindow then
@@ -559,7 +617,7 @@ public class VmProcessManager : IEngine
             args.Add("-serial"); args.Add("stdio");
             args.Add("-monitor"); args.Add("none");
         }
-        else if (vm.Display == "vnc" && vncPort.HasValue)
+        else if (vm.Debug.Display == "vnc" && vncPort.HasValue)
         {
             // No gtk/sdl window at all either - the guest's screen is only
             // reachable over VNC, on its own TCP port. Unlike gtk/sdl,
@@ -571,22 +629,22 @@ public class VmProcessManager : IEngine
         }
         else
         {
-            args.Add("-display"); args.Add(vm.Display);
+            args.Add("-display"); args.Add(vm.Debug.Display);
         }
 
-        if (!string.IsNullOrWhiteSpace(vm.DiskPath))
+        if (!string.IsNullOrWhiteSpace(vm.Workload.DiskPath))
         {
             args.Add("-drive");
-            args.Add($"file={vm.DiskPath},format={GuessFormat(vm.DiskPath)},if=virtio");
+            args.Add($"file={vm.Workload.DiskPath},format={GuessFormat(vm.Workload.DiskPath)},if=virtio");
         }
 
-        if (!string.IsNullOrWhiteSpace(vm.CdromPath))
+        if (!string.IsNullOrWhiteSpace(vm.Workload.CdromPath))
         {
             args.Add("-cdrom");
-            args.Add(vm.CdromPath);
+            args.Add(vm.Workload.CdromPath);
         }
 
-        if (vm.NetworkMode == "user")
+        if (vm.Platform.NetworkMode == "user")
         {
             args.Add("-netdev");
             args.Add("user,id=net0");
@@ -599,8 +657,8 @@ public class VmProcessManager : IEngine
             args.Add("none");
         }
 
-        if (!string.IsNullOrWhiteSpace(vm.ExtraArgs))
-            args.AddRange(SplitArguments(vm.ExtraArgs));
+        if (!string.IsNullOrWhiteSpace(vm.Workload.ExtraArgs))
+            args.AddRange(SplitArguments(vm.Workload.ExtraArgs));
 
         return args;
     }

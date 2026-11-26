@@ -43,17 +43,15 @@ Console.WriteLine($"LooksLikeQemuDir: {QemuLocator.LooksLikeQemuDir(qemuDir)}");
 var archs = QemuLocator.ListArchitectures(qemuDir);
 Console.WriteLine($"Architectures found: {archs.Count} (first few: {string.Join(", ", archs.Take(5))})");
 
-var vm = new VmConfig
+var vm = new EnvironmentConfig
 {
     Name = "selftest-vm",
-    Architecture = "x86_64",
-    MemoryMB = 256,
-    CpuCores = 1,
-    Display = "none-like", // overwritten below; QEMU's actual value is "none"
+    Platform = new Platform { Architecture = "x86_64", MemoryMB = 256, CpuCores = 1 },
+    Debug = new DebugConfiguration { Display = "none-like" }, // overwritten below; QEMU's actual value is "none"
 };
 // "none" is not one of the two choices the GUI offers (gtk/sdl), but it is a
 // real QEMU display backend and the right one for a headless smoke test.
-vm.Display = "none";
+vm.Debug.Display = "none";
 
 var manager = new VmProcessManager();
 
@@ -92,7 +90,7 @@ Console.WriteLine("\n--- Reattach after simulated app restart ---");
 // that instance can discover it is still running, query it over QMP, and
 // stop it, none of which it could do with only its own (empty) in-memory
 // state. See ARCHITECTURE_AUDIT.md's Critical Risk #1.
-var vm2 = new VmConfig { Name = "selftest-reattach-vm", Architecture = "x86_64", MemoryMB = 256, CpuCores = 1, Display = "none" };
+var vm2 = new EnvironmentConfig { Name = "selftest-reattach-vm", Platform = new Platform { Architecture = "x86_64", MemoryMB = 256, CpuCores = 1 }, Debug = new DebugConfiguration { Display = "none" } };
 var firstInstanceManager = new VmProcessManager();
 Console.WriteLine(await firstInstanceManager.StartAsync(vm2, qemuDir));
 Console.WriteLine($"State in the instance that started it: {firstInstanceManager.GetState(vm2.Id)}");
@@ -114,7 +112,7 @@ if (reattached)
     Console.WriteLine($"State after: {secondInstanceManager.GetState(vm2.Id)}");
 }
 
-var neverStartedVm = new VmConfig { Name = "selftest-never-started" };
+var neverStartedVm = new EnvironmentConfig { Name = "selftest-never-started" };
 Console.WriteLine($"TryReattach for a VM that was never started: {secondInstanceManager.TryReattach(neverStartedVm)} (expected: False)");
 
 Console.WriteLine($"\nriscv-emu dir: {riscvEmuDir}");
@@ -133,12 +131,11 @@ if (RiscvEmuLocator.LooksLikeRiscvEmuDir(riscvEmuDir))
     }
     else
     {
-        var riscvVm = new VmConfig
+        var riscvVm = new EnvironmentConfig
         {
-            Kind = "RiscvEmu",
+            EngineId = "RiscvEmu",
             Name = "selftest-riscv-emu",
-            KernelPath = kernelPath,
-            InitrdPath = File.Exists(initrdPath) ? initrdPath : "",
+            Workload = new Workload { KernelPath = kernelPath, InitrdPath = File.Exists(initrdPath) ? initrdPath : "" },
         };
 
         var riscvManager1 = new RiscvEmuProcessManager();
@@ -168,7 +165,7 @@ if (RiscvEmuLocator.LooksLikeRiscvEmuDir(riscvEmuDir))
             Console.WriteLine($"State after force stop: {(riscvManager2.IsRunning(riscvVm.Id) ? "Running" : "Stopped")}");
         }
 
-        var riscvNeverStarted = new VmConfig { Kind = "RiscvEmu", Name = "selftest-riscv-never-started" };
+        var riscvNeverStarted = new EnvironmentConfig { EngineId = "RiscvEmu", Name = "selftest-riscv-never-started" };
         Console.WriteLine($"TryReattach for a RiscvEmu VM that was never started: {riscvManager2.TryReattach(riscvNeverStarted)} (expected: False)");
 
         // --- Scenario coverage requested after Phase 0's UI overhaul: does
@@ -185,7 +182,7 @@ if (RiscvEmuLocator.LooksLikeRiscvEmuDir(riscvEmuDir))
         // guest-markers.sh's own remarks) before the shell becomes
         // interactive at all - the old image's own prompt showed up well
         // within 20s.
-        async Task<(string vmId, StringBuilder console, RiscvEmuProcessManager mgr)> BootToShell(VmConfig vm, int timeoutMs)
+        async Task<(string vmId, StringBuilder console, RiscvEmuProcessManager mgr)> BootToShell(EnvironmentConfig vm, int timeoutMs)
         {
             var mgr = new RiscvEmuProcessManager();
             var console = new StringBuilder();
@@ -238,7 +235,7 @@ if (RiscvEmuLocator.LooksLikeRiscvEmuDir(riscvEmuDir))
 
         Console.WriteLine("\n--- Scenario 1: does it actually reach a shell, and does `uname -a` work? ---");
         {
-            var vm1 = new VmConfig { Kind = "RiscvEmu", Name = "riscv-emu demo", KernelPath = kernelPath, InitrdPath = File.Exists(initrdPath) ? initrdPath : "" };
+            var vm1 = new EnvironmentConfig { EngineId = "RiscvEmu", Name = "riscv-emu demo", Workload = new Workload { KernelPath = kernelPath, InitrdPath = File.Exists(initrdPath) ? initrdPath : "" } };
             var (vmId, console, mgr) = await BootToShell(vm1, 100000);
             var reachedShell = console.ToString().Contains(GuestPrompt);
             Console.WriteLine($"Reached '{GuestPrompt}' prompt: {reachedShell}");
@@ -270,8 +267,8 @@ if (RiscvEmuLocator.LooksLikeRiscvEmuDir(riscvEmuDir))
               "InitrdPath": "{{(File.Exists(initrdPath) ? initrdPath.Replace("\\", "\\\\") : "")}}"
             }
             """;
-            var oldVm = System.Text.Json.JsonSerializer.Deserialize<VmConfig>(oldJson)!;
-            Console.WriteLine($"Deserialized old-format VM - DiskPath='{oldVm.DiskPath}' NetworkMode='{oldVm.NetworkMode}' MemoryMB={oldVm.MemoryMB}");
+            var oldVm = EnvironmentMigration.MigrateFromJson(oldJson);
+            Console.WriteLine($"Deserialized old-format VM - DiskPath='{oldVm.Workload.DiskPath}' NetworkMode='{oldVm.Platform.NetworkMode}' MemoryMB={oldVm.Platform.MemoryMB}");
             var (vmId, console, mgr) = await BootToShell(oldVm, 100000);
             Console.WriteLine($"Old-format VM reached '{GuestPrompt}' prompt: {console.ToString().Contains(GuestPrompt)}");
             mgr.ForceStop(oldVm);
@@ -282,11 +279,15 @@ if (RiscvEmuLocator.LooksLikeRiscvEmuDir(riscvEmuDir))
         {
             var diskPath3 = Path.Combine(riscvEmuDir, "boot", "disk.img");
             if (!File.Exists(diskPath3)) await File.WriteAllBytesAsync(diskPath3, new byte[16 * 1024 * 1024]);
-            var vm3 = new VmConfig
+            var vm3 = new EnvironmentConfig
             {
-                Kind = "RiscvEmu", Name = "selftest-disk-net",
-                KernelPath = kernelPath, InitrdPath = File.Exists(initrdPath) ? initrdPath : "",
-                DiskPath = diskPath3, NetworkMode = "user",
+                EngineId = "RiscvEmu", Name = "selftest-disk-net",
+                Platform = new Platform { NetworkMode = "user" },
+                Workload = new Workload
+                {
+                    KernelPath = kernelPath, InitrdPath = File.Exists(initrdPath) ? initrdPath : "",
+                    DiskPath = diskPath3,
+                },
             };
             var (vmId, console, mgr) = await BootToShell(vm3, 100000);
             var reachedShell = console.ToString().Contains(GuestPrompt);
@@ -314,7 +315,7 @@ if (RiscvEmuLocator.LooksLikeRiscvEmuDir(riscvEmuDir))
 
         Console.WriteLine("\n--- Scenario 4: a bad --kernel path must surface an error, not vanish as an unrecognized stderr line ---");
         {
-            var vm4 = new VmConfig { Kind = "RiscvEmu", Name = "selftest-bad-kernel", KernelPath = Path.Combine(riscvEmuDir, "boot", "ThisKernelDoesNotExist") };
+            var vm4 = new EnvironmentConfig { EngineId = "RiscvEmu", Name = "selftest-bad-kernel", Workload = new Workload { KernelPath = Path.Combine(riscvEmuDir, "boot", "ThisKernelDoesNotExist") } };
             var mgr = new RiscvEmuProcessManager();
             var console = new StringBuilder();
             mgr.OutputReceived += (id, bytes) => { if (id == vm4.Id) lock (console) console.Append(Encoding.UTF8.GetString(bytes)); };
@@ -327,29 +328,29 @@ if (RiscvEmuLocator.LooksLikeRiscvEmuDir(riscvEmuDir))
                     : "NOTHING reached the console view - this is the bug being checked for.");
         }
 
-        Console.WriteLine("\n--- Scenario 5: guest shutdown via VmConfig.ShutdownCommand - VM must go Stopped, console must not vanish before the last output is readable ---");
+        Console.WriteLine("\n--- Scenario 5: guest shutdown via Workload.ShutdownCommand - VM must go Stopped, console must not vanish before the last output is readable ---");
         {
             // Plain "poweroff" is a confirmed no-op on this bundled busybox
             // image - verified identical under riscv-emu AND real
             // qemu-system-riscv64 (same SigBlk/SigCgt masks on PID 1, same
             // nothing-happens result on both: busybox's poweroff signals
             // init, and this image's init never acts on it). So this uses
-            // the VM's own configured ShutdownCommand (VmConfig's default:
+            // the VM's own configured ShutdownCommand (Workload's default:
             // "sync; poweroff -f") instead of hardcoding "poweroff" - the
             // same thing the real Shutdown action will do once Phase 4 wires
             // it up.
-            var vm5 = new VmConfig { Kind = "RiscvEmu", Name = "selftest-poweroff", KernelPath = kernelPath, InitrdPath = File.Exists(initrdPath) ? initrdPath : "" };
+            var vm5 = new EnvironmentConfig { EngineId = "RiscvEmu", Name = "selftest-poweroff", Workload = new Workload { KernelPath = kernelPath, InitrdPath = File.Exists(initrdPath) ? initrdPath : "" } };
             var (vmId, console, mgr) = await BootToShell(vm5, 100000);
             var exited = false;
             mgr.ProcessExited += id => { if (id == vmId) exited = true; };
             if (console.ToString().Contains(GuestPrompt))
             {
                 var before = console.Length;
-                SendLine(mgr, vmId, vm5.ShutdownCommand);
+                SendLine(mgr, vmId, vm5.Workload.ShutdownCommand);
                 var deadline = DateTime.UtcNow.AddSeconds(10);
                 while (DateTime.UtcNow < deadline && !exited) await Task.Delay(200);
                 var tail = console.ToString(before, console.Length - before);
-                Console.WriteLine($"Process exited after '{vm5.ShutdownCommand}': {exited}");
+                Console.WriteLine($"Process exited after '{vm5.Workload.ShutdownCommand}': {exited}");
                 Console.WriteLine($"State: {(mgr.IsRunning(vmId) ? "Running (unexpected)" : "Stopped")}");
                 Console.WriteLine($"Console output after shutdown (last output must be present, e.g. 'Power down'): {tail.Trim()}");
             }
@@ -367,7 +368,7 @@ else
 }
 
 Console.WriteLine("\n--- Machine type (ARCHITECTURE_AUDIT.md recommendation #3) ---");
-// Proves VmConfig.MachineType actually reaches qemu-system-aarch64.exe as
+// Proves Platform.MachineType actually reaches qemu-system-aarch64.exe as
 // -M virt and is accepted, rather than only confirming BuildArguments
 // compiles. aarch64 has no usable default machine type at all, so a VM
 // with MachineType left empty is expected to fail; one with it set to
@@ -375,13 +376,13 @@ Console.WriteLine("\n--- Machine type (ARCHITECTURE_AUDIT.md recommendation #3) 
 // x86_64 smoke test above.
 if (QemuLocator.ListArchitectures(qemuDir).Contains("aarch64", StringComparer.OrdinalIgnoreCase))
 {
-    var armNoMachine = new VmConfig { Name = "selftest-arm-no-machine", Architecture = "aarch64", MemoryMB = 256, CpuCores = 1, Display = "none" };
+    var armNoMachine = new EnvironmentConfig { Name = "selftest-arm-no-machine", Platform = new Platform { Architecture = "aarch64", MemoryMB = 256, CpuCores = 1 }, Debug = new DebugConfiguration { Display = "none" } };
     var armManager1 = new VmProcessManager();
     Console.WriteLine($"aarch64, no MachineType set: {await armManager1.StartAsync(armNoMachine, qemuDir)}");
     await Task.Delay(500);
     Console.WriteLine($"State (expected: Stopped - qemu-system-aarch64 refuses to start with no machine type): {armManager1.GetState(armNoMachine.Id)}");
 
-    var armWithMachine = new VmConfig { Name = "selftest-arm-virt", Architecture = "aarch64", MachineType = "virt", MemoryMB = 256, CpuCores = 1, Display = "none" };
+    var armWithMachine = new EnvironmentConfig { Name = "selftest-arm-virt", Platform = new Platform { Architecture = "aarch64", MachineType = "virt", MemoryMB = 256, CpuCores = 1 }, Debug = new DebugConfiguration { Display = "none" } };
     var armManager2 = new VmProcessManager();
     Console.WriteLine($"aarch64, MachineType \"virt\": {await armManager2.StartAsync(armWithMachine, qemuDir)}");
     Console.WriteLine($"State (expected: Running): {armManager2.GetState(armWithMachine.Id)}");
@@ -465,7 +466,7 @@ Console.WriteLine("\n--- VNC headless display mode ---");
 // reading that back is a much stronger check than "the port accepted a
 // connection" (lots of things would).
 {
-    var vncVm = new VmConfig { Name = "selftest-vnc", Architecture = "x86_64", MemoryMB = 256, CpuCores = 1, Display = "vnc" };
+    var vncVm = new EnvironmentConfig { Name = "selftest-vnc", Platform = new Platform { Architecture = "x86_64", MemoryMB = 256, CpuCores = 1 }, Debug = new DebugConfiguration { Display = "vnc" } };
     var vncManager = new VmProcessManager();
     Console.WriteLine(await vncManager.StartAsync(vncVm, qemuDir));
 
@@ -501,17 +502,18 @@ if (File.Exists(diskPath)) File.Delete(diskPath);
 
 Console.WriteLine("\n--- VmService facade (Core architecture refactor) ---");
 // Proves the one facade MainWindow.xaml.cs now talks to for everything
-// VM-related - no VmStore, no per-engine manager - actually dispatches
-// correctly to whichever engine a VmConfig.Kind names, end to end against
-// the real binaries, not just that VmService compiles. Every assertion
-// here is something a window would otherwise be the only way to observe.
+// VM-related - no EnvironmentStore, no per-engine manager - actually
+// dispatches correctly to whichever engine an EnvironmentConfig.EngineId
+// names, end to end against the real binaries, not just that VmService
+// compiles. Every assertion here is something a window would otherwise be
+// the only way to observe.
 {
     IVmService service = new VmService();
 
     var riscvDraft = service.CreateDraft("RiscvEmu");
     var qemuDraft = service.CreateDraft("Qemu");
-    Console.WriteLine($"CreateDraft(\"RiscvEmu\").MemoryMB == 512: {riscvDraft.MemoryMB == 512} (actual: {riscvDraft.MemoryMB})");
-    Console.WriteLine($"CreateDraft(\"Qemu\").MemoryMB unaffected (VmConfig's own default): {qemuDraft.MemoryMB}");
+    Console.WriteLine($"CreateDraft(\"RiscvEmu\").MemoryMB == 512: {riscvDraft.Platform.MemoryMB == 512} (actual: {riscvDraft.Platform.MemoryMB})");
+    Console.WriteLine($"CreateDraft(\"Qemu\").MemoryMB unaffected (Platform's own default): {qemuDraft.Platform.MemoryMB}");
 
     Console.WriteLine("\n--- VM list management via the facade (LoadAll/Save/Delete - no VmStore in MainWindow any more) ---");
     {
@@ -529,7 +531,7 @@ Console.WriteLine("\n--- VmService facade (Core architecture refactor) ---");
     var facadeKernelPath = Path.Combine(riscvEmuDir, "boot", "KernelImage");
     if (RiscvEmuLocator.LooksLikeRiscvEmuDir(riscvEmuDir) && File.Exists(facadeKernelPath))
     {
-        var facadeVmRiscv = new VmConfig { Kind = "RiscvEmu", Name = "selftest-engine-facade", KernelPath = facadeKernelPath };
+        var facadeVmRiscv = new EnvironmentConfig { EngineId = "RiscvEmu", Name = "selftest-engine-facade", Workload = new Workload { KernelPath = facadeKernelPath } };
 
         var hw = service.GetHardwareDescription(facadeVmRiscv);
         Console.WriteLine($"GetHardwareDescription (riscv-emu): Engine={hw.EngineDisplayName}, Architecture={hw.Architecture}, CPU={hw.CpuDescription}, Accelerator={hw.AcceleratorDescription}, SupportsGuestDetail={hw.SupportsGuestDetail}, SupportsSpeedMetric={hw.SupportsSpeedMetric}");
@@ -595,7 +597,7 @@ Console.WriteLine("\n--- VmService facade (Core architecture refactor) ---");
         var facadeInitrdPath = Path.Combine(riscvEmuDir, "boot", "initramfs.cpio.gz");
         if (File.Exists(facadeInitrdPath))
         {
-            var shutdownVm = new VmConfig { Kind = "RiscvEmu", Name = "selftest-graceful-shutdown", KernelPath = facadeKernelPath, InitrdPath = facadeInitrdPath };
+            var shutdownVm = new EnvironmentConfig { EngineId = "RiscvEmu", Name = "selftest-graceful-shutdown", Workload = new Workload { KernelPath = facadeKernelPath, InitrdPath = facadeInitrdPath } };
             Console.WriteLine(await service.StartAsync(shutdownVm, settings));
             // The Buildroot-built image's own boot-time DHCP wait (see
             // guest-markers.sh's own remarks) can take close to a minute
@@ -609,7 +611,7 @@ Console.WriteLine("\n--- VmService facade (Core architecture refactor) ---");
             if (reachedShell)
             {
                 var graceful = await service.ShutdownAsync(shutdownVm, settings);
-                Console.WriteLine($"ShutdownAsync (\"{shutdownVm.ShutdownCommand}\"): \"{graceful.Message}\", TimedOut={graceful.TimedOut} (expected: False)");
+                Console.WriteLine($"ShutdownAsync (\"{shutdownVm.Workload.ShutdownCommand}\"): \"{graceful.Message}\", TimedOut={graceful.TimedOut} (expected: False)");
                 Console.WriteLine($"GetState after a successful graceful shutdown: {service.GetState(shutdownVm)} (expected: Stopped - the guest exited on its own, nothing force-stopped it)");
             }
             else
@@ -632,7 +634,7 @@ Console.WriteLine("\n--- VmService facade (Core architecture refactor) ---");
 
     if (QemuLocator.LooksLikeQemuDir(qemuDir))
     {
-        var facadeVmQemu = new VmConfig { Kind = "Qemu", Name = "selftest-engine-facade-qemu", Architecture = "x86_64", MemoryMB = 128, CpuCores = 1, Display = "none" };
+        var facadeVmQemu = new EnvironmentConfig { EngineId = "Qemu", Name = "selftest-engine-facade-qemu", Platform = new Platform { Architecture = "x86_64", MemoryMB = 128, CpuCores = 1 }, Debug = new DebugConfiguration { Display = "none" } };
 
         var hw = service.GetHardwareDescription(facadeVmQemu);
         Console.WriteLine($"GetHardwareDescription (QEMU): Engine={hw.EngineDisplayName}, Architecture={hw.Architecture}, CPU={hw.CpuDescription}, Accelerator={hw.AcceleratorDescription}, SupportsGuestDetail={hw.SupportsGuestDetail}, SupportsSpeedMetric={hw.SupportsSpeedMetric}");
@@ -750,7 +752,7 @@ Console.WriteLine("\n--- Recent Tasks: a VM's process exiting on its own is reco
         // OS process to kill from outside VmService's own API entirely
         // (not ForceStop - that is the "expected" path, already covered
         // above and by the idempotency-guard tests further down).
-        var stopTestVm = new VmConfig { Kind = "RiscvEmu", Name = "selftest-unexpected-stop", KernelPath = kernelPath };
+        var stopTestVm = new EnvironmentConfig { EngineId = "RiscvEmu", Name = "selftest-unexpected-stop", Workload = new Workload { KernelPath = kernelPath } };
         var settings = new AppSettings { QemuDir = qemuDir, RiscvEmuDir = riscvEmuDir };
         Console.WriteLine(await svc.StartAsync(stopTestVm, settings));
         Console.WriteLine($"Running: {svc.IsRunning(stopTestVm)} (expected: True)");
@@ -812,7 +814,7 @@ Console.WriteLine("\n--- Idempotency guards (bug report: double-clicking Console
     // real window to prove the guard against.
     if (QemuLocator.LooksLikeQemuDir(qemuDir))
     {
-        var vmGuard = new VmConfig { Kind = "Qemu", Name = "selftest-action-guard", Architecture = "x86_64", MemoryMB = 128, CpuCores = 1, Display = "none" };
+        var vmGuard = new EnvironmentConfig { EngineId = "Qemu", Name = "selftest-action-guard", Platform = new Platform { Architecture = "x86_64", MemoryMB = 128, CpuCores = 1 }, Debug = new DebugConfiguration { Display = "none" } };
         var settings = new AppSettings { QemuDir = qemuDir, RiscvEmuDir = riscvEmuDir };
 
         // Fire both "clicks" the way a real double-click would: the second
@@ -976,17 +978,21 @@ Console.WriteLine("\n--- AppPaths legacy-data import (Import/Start empty, not a 
     }
 }
 
-Console.WriteLine("\n--- VmStore: a riscv-emu VM saved before MemoryMB existed loads as 512 MB, not QEMU's 2048 MB default (item 2 of the Phase 3 detail-page work) ---");
-// VmConfig.MemoryMB's class default (2048) is sized for QEMU - loading an
-// old-format riscv-emu VM whose saved JSON has no MemoryMB field at all
-// used to silently fill in that QEMU-sized default instead of riscv-emu's
-// own 512, and did so on every LOAD, not just when a VM was first
-// created - see VmStore.LoadAll's own remarks. Writes straight into
-// AppPaths.VmsDir, the one directory this whole SelfTest process already
-// uses (QEMUMANAGER_DATA_DIR is fixed at the top of this file), the same
-// shared scratch folder the facade CRUD test above already writes into.
+Console.WriteLine("\n--- EnvironmentStore: a riscv-emu VM saved before MemoryMB existed loads as 512 MB, not QEMU's 2048 MB default (item 2 of the Phase 3 detail-page work) ---");
+// Platform.MemoryMB's class default (2048) is sized for QEMU - loading an
+// old-format (pre-Environment/Platform/Workload, no SchemaVersion at all)
+// riscv-emu VM whose saved JSON has no MemoryMB field at all used to
+// silently fill in that QEMU-sized default instead of riscv-emu's own
+// 512, and did so on every LOAD, not just when a VM was first created -
+// see EnvironmentMigration.MigrateFromJson's own remarks, which this now
+// goes through (both files below have no "SchemaVersion" property at
+// all, exactly what a real pre-migration vms/*.json looks like). Writes
+// straight into AppPaths.VmsDir, the one directory this whole SelfTest
+// process already uses (QEMUMANAGER_DATA_DIR is fixed at the top of this
+// file), the same shared scratch folder the facade CRUD test above
+// already writes into.
 {
-    var store = new VmStore();
+    var store = new EnvironmentStore();
     var oldFormatId = $"selftest-riscv-old-format-{Guid.NewGuid():N}";
     var oldFormatPath = Path.Combine(AppPaths.VmsDir, oldFormatId + ".json");
     var explicit2048Id = $"selftest-riscv-explicit-2048-{Guid.NewGuid():N}";
@@ -1017,14 +1023,74 @@ Console.WriteLine("\n--- VmStore: a riscv-emu VM saved before MemoryMB existed l
         var loaded = store.LoadAll();
         var oldFormatVm = loaded.FirstOrDefault(v => v.Id == oldFormatId);
         var explicit2048Vm = loaded.FirstOrDefault(v => v.Id == explicit2048Id);
-        Console.WriteLine($"Old-format riscv-emu VM (no MemoryMB in its JSON) loads with MemoryMB == 512: {oldFormatVm?.MemoryMB == 512} (actual: {(oldFormatVm != null ? oldFormatVm.MemoryMB.ToString() : "<not found>")})");
-        Console.WriteLine($"riscv-emu VM explicitly saved with MemoryMB=2048 still loads as 2048 (not downgraded): {explicit2048Vm?.MemoryMB == 2048} (actual: {(explicit2048Vm != null ? explicit2048Vm.MemoryMB.ToString() : "<not found>")})");
+        Console.WriteLine($"Old-format riscv-emu VM (no MemoryMB in its JSON) loads with MemoryMB == 512: {oldFormatVm?.Platform.MemoryMB == 512} (actual: {(oldFormatVm != null ? oldFormatVm.Platform.MemoryMB.ToString() : "<not found>")})");
+        Console.WriteLine($"riscv-emu VM explicitly saved with MemoryMB=2048 still loads as 2048 (not downgraded): {explicit2048Vm?.Platform.MemoryMB == 2048} (actual: {(explicit2048Vm != null ? explicit2048Vm.Platform.MemoryMB.ToString() : "<not found>")})");
+
+        // Both files are pre-Environment/Platform/Workload shaped (no
+        // SchemaVersion at all) - LoadAll above must have migrated both
+        // in place: EngineId correctly mapped from the old "Kind", a
+        // backup of the exact original bytes kept, and a second load not
+        // re-migrating (or re-backing-up) an already-migrated file.
+        Console.WriteLine($"Migrated EngineId == RiscvEmu (from the old \"Kind\"): {oldFormatVm?.EngineId == "RiscvEmu"}");
+        Console.WriteLine($"Migrated SchemaVersion == current: {oldFormatVm?.SchemaVersion == EnvironmentMigration.CurrentSchemaVersion}");
+        var oldFormatBackupPath = Path.Combine(AppPaths.VmsMigrationBackupDir, oldFormatId + ".json");
+        Console.WriteLine($"Original pre-migration bytes backed up to VmsMigrationBackupDir: {File.Exists(oldFormatBackupPath)}");
+        if (File.Exists(oldFormatBackupPath))
+            Console.WriteLine($"  backup still has the old flat shape (no \"Platform\" property): {!File.ReadAllText(oldFormatBackupPath).Contains("\"Platform\"")}");
+        Console.WriteLine($"File on disk is now the migrated (new-shape) JSON, not the old one: {File.ReadAllText(oldFormatPath).Contains("\"Platform\"")}");
+
+        var migratedOnceMore = store.LoadAll();
+        var reloadedOldFormatVm = migratedOnceMore.FirstOrDefault(v => v.Id == oldFormatId);
+        Console.WriteLine($"Loading an already-migrated file again is a no-op, not a re-migration: {reloadedOldFormatVm?.Platform.MemoryMB == 512 && reloadedOldFormatVm.EngineId == "RiscvEmu"}");
     }
     finally
     {
         try { File.Delete(oldFormatPath); } catch { }
         try { File.Delete(explicit2048Path); } catch { }
+        try { File.Delete(Path.Combine(AppPaths.VmsMigrationBackupDir, oldFormatId + ".json")); } catch { }
+        try { File.Delete(Path.Combine(AppPaths.VmsMigrationBackupDir, explicit2048Id + ".json")); } catch { }
     }
+}
+
+Console.WriteLine("\n--- IEngine.GetConfigSchema: validation (vision/VISION.md roadmap item 2's own schema-driven editor needs each field's Validate/Required to actually work) ---");
+{
+    IVmService schemaService = new VmService();
+
+    var riscvSchema = schemaService.GetConfigSchema("RiscvEmu");
+    var memoryField = riscvSchema.First(f => f.Key == "Platform.MemoryMB");
+    Console.WriteLine($"riscv-emu schema has a required Platform.MemoryMB field: {memoryField.Required}");
+    Console.WriteLine($"  Validate(0) rejects a non-positive value: {memoryField.Validate?.Invoke(0) != null}");
+    Console.WriteLine($"  Validate(512) accepts a positive value: {memoryField.Validate?.Invoke(512) == null}");
+
+    var kernelField = riscvSchema.First(f => f.Key == "Workload.KernelPath");
+    Console.WriteLine($"riscv-emu schema has a required Workload.KernelPath field: {kernelField.Required}");
+
+    var qemuSchema = schemaService.GetConfigSchema("Qemu");
+    Console.WriteLine($"QEMU schema has no Workload.KernelPath field (not supported yet - see vision/NEXT.md): {!qemuSchema.Any(f => f.Key == "Workload.KernelPath")}");
+    var coresField = qemuSchema.First(f => f.Key == "Platform.CpuCores");
+    Console.WriteLine($"  Validate(0) rejects zero CPU cores: {coresField.Validate?.Invoke(0) != null}");
+    Console.WriteLine($"  Validate(1) accepts one core: {coresField.Validate?.Invoke(1) == null}");
+
+    // Get/Set round-trip directly against a real EnvironmentConfig - what
+    // EnvironmentEditWindow actually relies on to read/write each field
+    // without reflection.
+    var roundTripEnv = schemaService.CreateDraft("RiscvEmu");
+    memoryField.Set(roundTripEnv, 1024);
+    Console.WriteLine($"ConfigField.Set writes through to the real EnvironmentConfig: {roundTripEnv.Platform.MemoryMB == 1024}");
+    Console.WriteLine($"ConfigField.Get reads the same value back: {(int)memoryField.Get(roundTripEnv)! == 1024}");
+
+    var caps = schemaService.GetCapabilities("RiscvEmu");
+    Console.WriteLine($"riscv-emu Capabilities: SupportsSmp=False, SupportsKernelBoot=True: {!caps.SupportsSmp && caps.SupportsKernelBoot}");
+    var qemuCaps = schemaService.GetCapabilities("Qemu");
+    Console.WriteLine($"QEMU Capabilities: SupportsSmp=True, SupportsMultipleDisplayModes=True: {qemuCaps.SupportsSmp && qemuCaps.SupportsMultipleDisplayModes}");
+
+    if (QemuLocator.LooksLikeQemuDir(qemuDir))
+    {
+        var qemuArchs = schemaService.ListArchitectures("Qemu", new AppSettings { QemuDir = qemuDir, RiscvEmuDir = riscvEmuDir });
+        Console.WriteLine($"ListArchitectures(\"Qemu\") returns a real, non-empty list: {qemuArchs.Count > 0} ({qemuArchs.Count} found)");
+    }
+    var riscvArchs = schemaService.ListArchitectures("RiscvEmu", new AppSettings { QemuDir = qemuDir, RiscvEmuDir = riscvEmuDir });
+    Console.WriteLine($"ListArchitectures(\"RiscvEmu\") is always exactly riscv64: {riscvArchs.Count == 1 && riscvArchs[0] == "riscv64"}");
 }
 
 Console.WriteLine("\n--- No DataGrid in the app is editable unless explicitly intended (bug: double-click on a cell crashed the app) ---");
@@ -1127,8 +1193,8 @@ Console.WriteLine("\n--- NoResize dialogs must not have a fixed Height (content 
 // Cancel was not visible at all. SizeToContent="Height" (the fix applied
 // to every dialog below) makes the window grow to fit its own content
 // instead of silently clipping it; a dialog that could still exceed a
-// short screen also gets a ScrollViewer plus a MaxHeight cap (VmEditWindow,
-// RiscvEmuEditWindow) as a second line of defense. This check is static,
+// short screen also gets a ScrollViewer plus a MaxHeight cap
+// (EnvironmentEditWindow) as a second line of defense. This check is static,
 // for the same reason as the DataGrid/TreeViewItem checks above - the
 // point is that something keeps checking this automatically, not that it
 // needs a live window to be meaningful (an actually-rendered layout check
@@ -1143,7 +1209,7 @@ Console.WriteLine("\n--- NoResize dialogs must not have a fixed Height (content 
     else
     {
         XNamespace xaml = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
-        var dialogFiles = new[] { "NewVmKindWindow.xaml", "SettingsWindow.xaml", "CreateDiskWindow.xaml", "VmEditWindow.xaml", "RiscvEmuEditWindow.xaml" };
+        var dialogFiles = new[] { "NewEnvironmentWindow.xaml", "SettingsWindow.xaml", "CreateDiskWindow.xaml", "EnvironmentEditWindow.xaml" };
         foreach (var name in dialogFiles)
         {
             var path = Path.Combine(wpfProjectDir, name);
