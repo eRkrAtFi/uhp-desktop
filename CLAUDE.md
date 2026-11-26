@@ -12,10 +12,18 @@ repository (`riscv-emu/`, `QemuManager/`, `vision/`, `docs/`).
 - When the change is done and green locally (`QemuManager/finish.ps1`
   for QemuManager/UHP.Core; `make test-all` and `make compare` for
   riscv-emu, as applicable), open a pull request into `main` with a
-  summary of the change, and wait for approval before merging - never
-  merge a pull request without it.
-- After approval, squash-merge into `main`. Only tag and create a
-  release after that squash-merge has actually landed on `main` - never
-  tag a branch directly, and never tag/release before the merge.
+  summary of the change.
+- **"Approval" means the repo owner clicks Merge on the pull request
+  themselves, once CI is green - not an approving review.** (A solo
+  repo has no second person who could approve the author's own PR.)
+  Claude never merges a pull request itself, regardless of how green
+  CI is - it opens the PR, confirms CI is passing, and then waits; the
+  repo owner merges it whenever they choose to.
+- Squash-merge into `main`, then tag and create the release - never tag
+  a branch directly, and never tag/release before the merge has
+  actually landed on `main`.
 - `main` is protected on GitHub (see repo Settings -> Branches): changes
-  only land through a pull request with passing CI.
+  only land through a pull request with a passing `build-and-test`
+  check; force-pushes and branch deletion are disabled. No approving
+  review count is required (there is no second reviewer to require it
+  from) - the merge button itself is the approval.

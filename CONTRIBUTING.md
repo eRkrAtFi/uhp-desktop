@@ -38,9 +38,14 @@ request is opened.
 
 1. Open a pull request from your branch into `main`, with a summary of
    what changed and why.
-2. Wait for approval before merging - do not merge your own pull request
-   without it.
-3. Once approved, squash-merge into `main`.
+2. Wait for CI to go green on the pull request.
+3. The repo owner squash-merges it themselves, via the Merge button, once
+   they choose to - that click is the approval. There is no separate
+   approving review to request: a solo repo has no second person who
+   could approve the author's own PR, so branch protection requires 0
+   approving reviews and relies on the green `build-and-test` check plus
+   the merge itself instead. Claude never merges a pull request it
+   opened, regardless of how green CI is.
 4. Only after that squash-merge has landed: tag the release (e.g.
    `vX.Y.Z`) and push the tag. Pushing a tag triggers
    `.github/workflows/release.yml`, which builds and publishes the
