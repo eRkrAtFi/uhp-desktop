@@ -57,7 +57,7 @@ seconds alongside the existing QMP guest-status check.
 
 ## riscv-emu VMs
 
-A "New VM" now asks which kind to create. For "riscv-emu" the form is much
+A "New Environment" now asks which kind to create. For "riscv-emu" the form is much
 shorter - a name, a kernel `Image` path, an optional initramfs, and extra
 kernel boot-command-line arguments - because there is no QMP, no display
 backend choice, no disk/CD-ROM, and memory/CPU are fixed (riscv-emu is a
@@ -162,15 +162,18 @@ starts and accepts QMP connections normally - see
 `QemuManager.SelfTest`'s "Machine type" section). This was
 `ARCHITECTURE_AUDIT.md`'s recommendation #3.
 
-Two new, optional `VmConfig` fields close that gap: `MachineType` (QEMU's
-`-M`) and `FirmwarePath` (QEMU's `-bios`) - both empty by default, so every
-VM saved before these fields existed behaves exactly as before. The VM
-form's Architecture dropdown now also shows a short hint for architectures
-known to need one (aarch64, arm, riscv64, riscv32 so far - `VmEditWindow`'s
-`ArchHints` table), and *offers* (fills in only if the field is currently
-empty, never overwrites a value already there) that architecture's
-suggested machine type. Firmware is never guessed - it is a real file only
-the user can supply.
+Two new, optional `Platform`/`Firmware` fields close that gap: `MachineType`
+(QEMU's `-M`) and `FirmwarePath` (QEMU's `-bios`) - both empty by default, so
+every Environment saved before these fields existed behaves exactly as
+before. Firmware is never guessed - it is a real file only the user can
+supply.
+
+> **Known gap:** the old per-engine `VmEditWindow` used to show a short hint
+> for architectures known to need an explicit machine type (aarch64, arm,
+> riscv64, riscv32) and offer to fill in the suggested one - lost when it was
+> replaced by the schema-driven `EnvironmentEditWindow` (vision/VISION.md's
+> roadmap item 2) and not yet ported to the new schema; set `MachineType`
+> manually for those architectures until this comes back.
 
 ## QMP timeouts
 
@@ -303,31 +306,43 @@ request a graceful shutdown, not just send SIGKILL and hope.
 
 ```
 QemuManager/
-  Models/VmConfig.cs          one VM's settings (the persisted shape; Kind
-                               selects Qemu vs RiscvEmu fields)
-  Models/VmListItem.cs        binds VmConfig to the main grid with live status
+  Models/EnvironmentConfig.cs one Environment's settings (the persisted
+                               root shape: Id/Name/EngineId + Platform/
+                               Firmware/Workload/DebugConfiguration)
+  Models/VmListItem.cs        binds EnvironmentConfig to the main grid with live status
   Services/QemuLocator.cs     finds qemu-system-*.exe / qemu-img.exe
-  Services/VmProcessManager.cs   builds the command line, starts/stops, QMP status,
-                               and (Display == "console") pipes stdio like riscv-emu does
+  Services/VmProcessManager.cs   IEngine for QEMU - builds the command line,
+                               starts/stops, QMP status, and (Display == "console")
+                               pipes stdio like riscv-emu does
   Services/QmpClient.cs       the QMP protocol client itself
   Services/DiskImageService.cs  wraps qemu-img.exe
-  Services/VmStore.cs         JSON persistence
-  Services/IConsoleSource.cs     what ConsoleWindow needs from either process manager
+  Services/EnvironmentStore.cs   JSON persistence, with transparent migration
+                               from the old flat VmConfig shape (see EnvironmentMigration.cs)
+  Services/IEngine.cs / EngineRegistry.cs   the engine interface both process
+                               managers implement, and the one place they are registered
+  Services/IConsoleSource.cs     what ConsoleWindow/TerminalControl need from either engine
   Services/RiscvEmuLocator.cs    finds riscv-emu.exe / boot/firmware.bin
   Services/RiscvEmuBoot.cs       builds riscv-emu.exe's command line (boot.sh, in C#)
   Services/DtbBuilder.cs         FDT/DTB builder (make_dtb.py, in C#)
-  Services/RiscvEmuProcessManager.cs   starts/stops riscv-emu.exe, streams its console
-  Services/RuntimeStateStore.cs   sidecar "is this VM's process still alive" file per
-                               running VM - see "Surviving an app restart" below
-  Services/ResourceUsageSampler.cs   the CPU%/memory sampling arithmetic both process
-                               managers' GetResourceUsage need, factored out once rather
+  Services/RiscvEmuProcessManager.cs   IEngine for riscv-emu - starts/stops
+                               riscv-emu.exe, streams its console
+  Services/RuntimeStateStore.cs   sidecar "is this Environment's process still
+                               alive" file per running Environment - see
+                               "Surviving an app restart" below
+  Services/ResourceUsageSampler.cs   the CPU%/memory sampling arithmetic both engines'
+                               GetResourceUsage need, factored out once rather
                                than kept duplicated
-  MainWindow.xaml(.cs)        VM list + toolbar
-  NewVmKindWindow.xaml(.cs)   "Qemu or RiscvEmu?" picker shown by New VM
-  VmEditWindow.xaml(.cs)      create/edit form (Qemu)
-  RiscvEmuEditWindow.xaml(.cs)   create/edit form (RiscvEmu)
-  ConsoleWindow.xaml(.cs)     live text console for a running VM of either kind
-                               (riscv-emu always; a Qemu VM only if Display == "console")
+  MainWindow.xaml(.cs)        Environment list + toolbar
+  NewEnvironmentWindow.xaml(.cs)   "Operating System or Kernel / Bootloader?"
+                               template picker shown by New Environment
+  EnvironmentEditWindow.xaml(.cs)   one schema-driven create/edit form for
+                               either engine (see IEngine.GetConfigSchema)
+  ConsoleWindow.xaml(.cs)     live terminal for a running Environment of either
+                               kind (riscv-emu always; a Qemu one only if
+                               Display == "console")
+  TerminalControl.xaml(.cs) / Assets/terminal.html   the real terminal (xterm.js
+                               in WebView2) ConsoleWindow and the detail page's
+                               own console preview both share
   SettingsWindow.xaml(.cs)    QEMU + riscv-emu install directory pickers
   CreateDiskWindow.xaml(.cs)  new qcow2 disk dialog
 QemuManager.SelfTest/         console harness that drives the same Services
@@ -470,7 +485,7 @@ checkout, not just compiled:
 2. **A full GUI click-through** - driven with Windows UI Automation
    (`System.Windows.Automation`, run under `pwsh -STA`, since UI Automation's
    COM marshaling needs an STA thread and PowerShell 7 defaults to MTA):
-   New VM → fill in the form → Save → select the row → Start → confirmed the
+   New Environment → fill in the form → Save → select the row → Start → confirmed the
    real `qemu-system-x86_64w.exe` process was running → read the live status
    bar → Stop (ACPI) → Force Stop → confirmed the process actually exited.
    That script lives in this session's scratchpad, not in the repo, since it

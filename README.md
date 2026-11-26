@@ -5,38 +5,36 @@
 > below for what works and what doesn't yet, and
 > [Reporting bugs](#reporting-bugs) if something breaks.
 
-A Windows desktop VM manager (**UHP Desktop**, .NET 8/WPF) paired with a
-hand-written RISC-V system emulator (**riscv-emu**) built from scratch in
-C and verified at every step against real QEMU.
+A Windows desktop Environment manager (**UHP Desktop**, .NET 8/WPF) paired
+with a hand-written RISC-V system emulator (**riscv-emu**) built from
+scratch in C and verified at every step against real QEMU.
 
-- **UHP Desktop** (`QemuManager/`) manages virtual machines two ways: real
-  QEMU VMs (it drives `qemu-system-*.exe` over QMP, the same way
-  virt-manager or GNOME Boxes do) and `riscv-emu` VMs (its own process,
-  driven directly - no QEMU involved at runtime for those).
+- **UHP Desktop** (`QemuManager/`) manages Environments two ways: real
+  QEMU Environments (it drives `qemu-system-*.exe` over QMP, the same way
+  virt-manager or GNOME Boxes do) and `riscv-emu` Environments (its own
+  process, driven directly - no QEMU involved at runtime for those).
 - **riscv-emu** (`riscv-emu/`) is an RV64IMAFDC(Zicsr,Sstc) interpreter
   that boots a real, unmodified riscv64 Linux kernel to an interactive
   shell, with virtio-blk/virtio-net and real-time guest clock semantics -
   see [`riscv-emu/README.md`](riscv-emu/README.md) for the full phase-by-phase
   build log and every bug found along the way.
 
-![UHP Desktop's main window, with one VM running](docs/screenshot.png)
+![UHP Desktop's main window, with one Environment running](docs/screenshot.png)
 
 ## Status
 
-**Works:** creating/running/stopping both real QEMU VMs and riscv-emu
-VMs; the riscv-emu console (typing, Ctrl+C, a real graceful Shut Down
-that waits for the guest to exit on its own); live CPU/memory stats;
-Recent Tasks; a portable, no-installer release build.
+**Works:** creating/running/stopping both real QEMU Environments and
+riscv-emu Environments; a real terminal console (xterm.js - colors,
+cursor movement, Ctrl+C, copy/paste) with a graceful Shut Down that
+waits for the guest to exit on its own; live CPU/memory stats; Recent
+Tasks; a portable, no-installer release build.
 
 **Does not work yet:**
-- The console window shows ANSI/VT100 escape sequences literally
-  (colors, cursor movement) instead of interpreting them - plain text
-  only for now.
 - The **Storage** and **Networking** sections in the sidebar are
-  placeholders with no functionality behind them yet (per-VM disk/
-  network settings, in the VM's own Edit dialog, already work - these
-  are for anything beyond that, e.g. a storage-pool or bridged-network
-  view).
+  placeholders with no functionality behind them yet (per-Environment
+  disk/network settings, in the Environment's own Edit window, already
+  work - these are for anything beyond that, e.g. a storage-pool or
+  bridged-network view).
 
 See [`QemuManager/ARCHITECTURE_AUDIT.md`](QemuManager/ARCHITECTURE_AUDIT.md)
 for the full, honest list of known gaps and risks (storage/networking
@@ -60,11 +58,11 @@ this project).
 - [.NET 8 runtime](https://dotnet.microsoft.com/download/dotnet/8.0) to
   run UHP Desktop (the portable release bundle has no other
   prerequisite).
-- A QEMU install if you want to run real QEMU VMs -
+- A QEMU install if you want to run real QEMU Environments -
   `winget install --id SoftwareFreedomConservancy.QEMU -e`, or an
   installer from [qemu.org](https://www.qemu.org/download/#windows) /
   [qemu.weilnetz.de](https://qemu.weilnetz.de/w64/). Not needed at all
-  for `riscv-emu` VMs - UHP Desktop works with only those and no QEMU
+  for `riscv-emu` Environments - UHP Desktop works with only those and no QEMU
   install anywhere on the machine.
 - To **build** riscv-emu yourself (not required to just run it): a
   portable GCC such as [w64devkit](https://github.com/skeeto/w64devkit)
@@ -76,9 +74,9 @@ this project).
 1. Download the latest release's `UHP-Desktop-portable.zip` from this
    repo's [Releases](../../releases) page and extract it anywhere.
 2. Run `QemuManager.exe`. No installer, no admin rights needed.
-3. Click **+ New VM**, choose **riscv-emu**, point it at a kernel Image
-   (and optionally an initramfs) - see the note below on where to get one
-   - and click **Power On**.
+3. Click **+ New Environment**, choose **Kernel / Bootloader**, point it
+   at a kernel Image (and optionally an initramfs) - see the note below
+   on where to get one - and click **Power On**.
 4. The console window that opens is the guest's own UART - type into it
    like a terminal (`Ctrl+C` works, arrow keys work, `Send Ctrl+C` button
    if you'd rather click).
@@ -93,12 +91,12 @@ from-scratch, fully reproducible Buildroot build (Linux 6.18.64 - see
 [`THIRD_PARTY.md`](THIRD_PARTY.md) for exactly what it targets and how it
 is verified) from this repo's own
 [`guest-images-v1`](../../releases/tag/guest-images-v1) release, then
-point a new riscv-emu VM at the `boot/KernelImage` and
+point a new riscv-emu Environment at the `boot/KernelImage` and
 `boot/initramfs.cpio.gz` it extracts. The fetch itself needs nothing
 extra - a plain HTTPS download, same as any other release asset; the
 [GitHub CLI](https://cli.github.com/) (`gh`) is only used as a fallback
 if that download fails for some reason (a proxy/firewall blocking
-github.com's own release-asset host, for instance). (Real QEMU VMs need
+github.com's own release-asset host, for instance). (Real QEMU Environments need
 neither - point UHP Desktop at an existing disk image/ISO the same way
 any QEMU front end would.)
 

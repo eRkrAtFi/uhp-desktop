@@ -42,13 +42,25 @@ public partial class EnvironmentEditWindow : Window
         NameBox.Text = env.Name;
 
         var schema = _vmService.GetConfigSchema(env.EngineId);
-        foreach (var group in schema.Select(f => f.Group).Distinct())
+        // Fixed order (EnvironmentConfig's own sub-object order), not
+        // whatever order this engine's own schema happens to list fields
+        // in - every engine's editor should read the same way, section
+        // for section, rather than each engine's own GetConfigSchema
+        // implicitly deciding the layout. A group with no fields for this
+        // engine (e.g. riscv-emu has no Firmware fields) is skipped
+        // entirely, not shown as an empty heading.
+        foreach (var group in CanonicalGroupOrder)
         {
+            var fieldsInGroup = schema.Where(f => f.Group == group).ToList();
+            if (fieldsInGroup.Count == 0) continue;
+
             FieldsPanel.Children.Add(new TextBlock { Text = group, Style = (Style)FindResource("GroupHeading") });
-            foreach (var field in schema.Where(f => f.Group == group))
+            foreach (var field in fieldsInGroup)
                 AddFieldRow(field);
         }
     }
+
+    private static readonly string[] CanonicalGroupOrder = { "Platform", "Firmware", "Workload", "Debug" };
 
     private void AddFieldRow(ConfigField field)
     {

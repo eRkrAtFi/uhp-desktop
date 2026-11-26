@@ -32,7 +32,7 @@ public static class RiscvEmuBoot
             "--kernel", vm.Workload.KernelPath,
         };
         if (!string.IsNullOrWhiteSpace(vm.Workload.InitrdPath)) { args.Add("--initrd"); args.Add(vm.Workload.InitrdPath); }
-        if (!string.IsNullOrWhiteSpace(vm.Workload.ExtraArgs)) { args.Add("--append"); args.Add(vm.Workload.ExtraArgs.Trim()); }
+        if (!string.IsNullOrWhiteSpace(vm.Workload.KernelCmdline)) { args.Add("--append"); args.Add(vm.Workload.KernelCmdline.Trim()); }
         if (!string.IsNullOrWhiteSpace(vm.Workload.DiskPath)) { args.Add("--disk"); args.Add(vm.Workload.DiskPath); }
         if (vm.Platform.NetworkMode == "user") args.Add("--net");
         if (vm.Platform.MemoryMB > 0) { args.Add("--mem"); args.Add(((ulong)vm.Platform.MemoryMB * 1024UL * 1024UL).ToString()); }

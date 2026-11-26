@@ -45,10 +45,14 @@ public class EnvironmentStore
 
     private static EnvironmentConfig? LoadOne(string file, string json)
     {
+        int schemaVersion;
         using (var doc = JsonDocument.Parse(json))
         {
             if (!EnvironmentMigration.NeedsMigration(doc.RootElement))
                 return JsonSerializer.Deserialize<EnvironmentConfig>(json);
+
+            schemaVersion = doc.RootElement.TryGetProperty(nameof(EnvironmentConfig.SchemaVersion), out var v) && v.ValueKind == JsonValueKind.Number
+                ? v.GetInt32() : 0;
         }
 
         // Back up the exact original bytes before this file is ever
@@ -59,7 +63,16 @@ public class EnvironmentStore
         var backupPath = Path.Combine(AppPaths.VmsMigrationBackupDir, Path.GetFileName(file));
         if (!File.Exists(backupPath)) File.Copy(file, backupPath);
 
-        var migrated = EnvironmentMigration.MigrateFromJson(json);
+        // schemaVersion 0 (no property at all - the original flat
+        // VmConfig shape) needs the full legacy conversion first;
+        // MigrateFromJson already carries that all the way up to
+        // CurrentSchemaVersion. Anything already Environment-shaped
+        // (schemaVersion >= 1, e.g. every file saved under v0.4.0) only
+        // needs whatever later version steps (MigrateV1ToV2, ...) it is
+        // still behind on.
+        var migrated = schemaVersion == 0
+            ? EnvironmentMigration.MigrateFromJson(json)
+            : EnvironmentMigration.MigrateV1ToV2(JsonSerializer.Deserialize<EnvironmentConfig>(json)!);
         File.WriteAllText(file, JsonSerializer.Serialize(migrated, JsonOptions));
         return migrated;
     }

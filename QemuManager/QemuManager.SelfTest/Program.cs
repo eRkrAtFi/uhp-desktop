@@ -771,8 +771,8 @@ Console.WriteLine("\n--- Recent Tasks: a VM's process exiting on its own is reco
             // immediately.
             for (var i = 0; i < 50 && svc.IsRunning(stopTestVm); i++) await Task.Delay(100);
             var tasks = svc.GetRecentTasks();
-            var stopped = tasks.FirstOrDefault(t => t.Name == "VM stopped" && t.Target == stopTestVm.Name);
-            Console.WriteLine($"Recorded as \"VM stopped\" even though nothing called ForceStop/ShutdownAsync - this process was killed directly: {stopped != null}");
+            var stopped = tasks.FirstOrDefault(t => t.Name == "Environment stopped" && t.Target == stopTestVm.Name);
+            Console.WriteLine($"Recorded as \"Environment stopped\" even though nothing called ForceStop/ShutdownAsync - this process was killed directly: {stopped != null}");
             Console.WriteLine($"  Status == Succeeded, Result == \"Process exited.\": {stopped?.Status == "Succeeded" && stopped.Result == "Process exited."}");
         }
     }
@@ -1052,6 +1052,95 @@ Console.WriteLine("\n--- EnvironmentStore: a riscv-emu VM saved before MemoryMB 
     }
 }
 
+Console.WriteLine("\n--- EnvironmentMigration.MigrateV1ToV2: QEMU's -kernel/-initrd/-append extracted out of ExtraArgs (v0.4.1) ---");
+{
+    // Direct unit-style check first: a quoted path with spaces, and
+    // other, unrelated flags before/after/between the three this
+    // migration cares about - everything NOT -kernel/-initrd/-append
+    // must survive in ExtraArgs exactly, in order.
+    var qemuV1 = new EnvironmentConfig
+    {
+        EngineId = "Qemu",
+        Name = "selftest-migrate-qemu-kernel",
+        Workload = new Workload
+        {
+            ExtraArgs = "-foo bar -kernel \"C:\\path with spaces\\k\" -initrd i.img -append \"console=ttyS0 foo=bar\" -baz",
+        },
+        SchemaVersion = 1,
+    };
+    var qemuV2 = EnvironmentMigration.MigrateV1ToV2(qemuV1);
+    Console.WriteLine($"KernelPath extracted: {qemuV2.Workload.KernelPath == @"C:\path with spaces\k"} (actual: '{qemuV2.Workload.KernelPath}')");
+    Console.WriteLine($"InitrdPath extracted: {qemuV2.Workload.InitrdPath == "i.img"} (actual: '{qemuV2.Workload.InitrdPath}')");
+    Console.WriteLine($"KernelCmdline extracted: {qemuV2.Workload.KernelCmdline == "console=ttyS0 foo=bar"} (actual: '{qemuV2.Workload.KernelCmdline}')");
+    Console.WriteLine($"Remaining ExtraArgs keeps only the other flags, in order: {qemuV2.Workload.ExtraArgs == "-foo bar -baz"} (actual: '{qemuV2.Workload.ExtraArgs}')");
+    Console.WriteLine($"SchemaVersion bumped to current: {qemuV2.SchemaVersion == EnvironmentMigration.CurrentSchemaVersion}");
+
+    // A QEMU Environment with none of the three flags must be left
+    // alone beyond the version bump - no false extraction, no mangled
+    // ExtraArgs.
+    var qemuNoKernelV1 = new EnvironmentConfig { EngineId = "Qemu", Workload = new Workload { ExtraArgs = "-cpu host -vga std" }, SchemaVersion = 1 };
+    var qemuNoKernelV2 = EnvironmentMigration.MigrateV1ToV2(qemuNoKernelV1);
+    Console.WriteLine($"QEMU Environment with no -kernel/-initrd/-append: ExtraArgs unchanged: {qemuNoKernelV2.Workload.ExtraArgs == "-cpu host -vga std"}, KernelPath still empty: {qemuNoKernelV2.Workload.KernelPath == ""}");
+
+    // riscv-emu: ExtraArgs only ever meant "kernel command line" for
+    // this engine - moves to KernelCmdline outright, ExtraArgs cleared.
+    var riscvV1 = new EnvironmentConfig { EngineId = "RiscvEmu", Workload = new Workload { ExtraArgs = "loglevel=8" }, SchemaVersion = 1 };
+    var riscvV2 = EnvironmentMigration.MigrateV1ToV2(riscvV1);
+    Console.WriteLine($"riscv-emu: ExtraArgs moved to KernelCmdline: {riscvV2.Workload.KernelCmdline == "loglevel=8"}, ExtraArgs cleared: {riscvV2.Workload.ExtraArgs == ""}");
+
+    // Calling it again on an already-v2 Environment must be a no-op -
+    // SchemaVersion >= 2 short-circuits before touching anything.
+    var alreadyV2 = EnvironmentMigration.MigrateV1ToV2(qemuV2);
+    Console.WriteLine($"MigrateV1ToV2 on an already-v2 Environment is a no-op: {ReferenceEquals(alreadyV2, qemuV2) && alreadyV2.Workload.ExtraArgs == "-foo bar -baz"}");
+
+    // End-to-end through EnvironmentStore.LoadAll, not just the direct
+    // migration call - a real v1-shaped file on disk (SchemaVersion: 1,
+    // the exact shape every Environment saved under v0.4.0 has) must
+    // come back from a real load with the extraction applied, the
+    // original bytes backed up, and the file on disk rewritten to v2 -
+    // the same three guarantees the v0-shaped migration test above
+    // already proved for the legacy-to-v1 step.
+    var store = new EnvironmentStore();
+    var v1FileId = $"selftest-migrate-v1-qemu-{Guid.NewGuid():N}";
+    var v1FilePath = Path.Combine(AppPaths.VmsDir, v1FileId + ".json");
+    try
+    {
+        Directory.CreateDirectory(AppPaths.VmsDir);
+        File.WriteAllText(v1FilePath, $$"""
+        {
+          "Id": "{{v1FileId}}",
+          "Name": "selftest-migrate-v1-qemu",
+          "EngineId": "Qemu",
+          "Platform": { "Architecture": "x86_64", "MachineType": "", "CpuCores": 2, "MemoryMB": 2048, "Accelerator": "tcg", "NetworkMode": "user" },
+          "Firmware": { "FirmwarePath": "" },
+          "Workload": { "DiskPath": "", "CdromPath": "", "KernelPath": "", "InitrdPath": "", "BootOrder": "c", "ExtraArgs": "-kernel k.bin -initrd i.img -append \"console=ttyS0\"", "ShutdownCommand": "poweroff" },
+          "Debug": { "Display": "gtk", "EnterSends": "CR" },
+          "CreatedUtc": "2026-01-01T00:00:00Z",
+          "SchemaVersion": 1
+        }
+        """);
+
+        var loaded = store.LoadAll();
+        var reloadedEnv = loaded.FirstOrDefault(v => v.Id == v1FileId);
+        Console.WriteLine($"Real v1-shaped file on disk: KernelPath extracted via a full LoadAll: {reloadedEnv?.Workload.KernelPath == "k.bin"} (actual: '{reloadedEnv?.Workload.KernelPath}')");
+        Console.WriteLine($"  InitrdPath: {reloadedEnv?.Workload.InitrdPath == "i.img"}, KernelCmdline: {reloadedEnv?.Workload.KernelCmdline == "console=ttyS0"}, ExtraArgs now empty: {reloadedEnv?.Workload.ExtraArgs == ""}");
+
+        var v1Backup = Path.Combine(AppPaths.VmsMigrationBackupDir, v1FileId + ".json");
+        Console.WriteLine($"Original v1 bytes backed up before rewrite: {File.Exists(v1Backup)}");
+        if (File.Exists(v1Backup))
+            Console.WriteLine($"  backup still has the v1 shape (SchemaVersion 1, kernel flags still in ExtraArgs): {File.ReadAllText(v1Backup).Contains("\"SchemaVersion\": 1")}");
+        Console.WriteLine($"File on disk is now SchemaVersion 2: {File.ReadAllText(v1FilePath).Contains($"\"SchemaVersion\": {EnvironmentMigration.CurrentSchemaVersion}")}");
+
+        var reloadedAgain = store.LoadAll().FirstOrDefault(v => v.Id == v1FileId);
+        Console.WriteLine($"Loading it again is a no-op, not a second migration: {reloadedAgain?.Workload.KernelPath == "k.bin" && reloadedAgain.SchemaVersion == EnvironmentMigration.CurrentSchemaVersion}");
+    }
+    finally
+    {
+        try { File.Delete(v1FilePath); } catch { }
+        try { File.Delete(Path.Combine(AppPaths.VmsMigrationBackupDir, v1FileId + ".json")); } catch { }
+    }
+}
+
 Console.WriteLine("\n--- IEngine.GetConfigSchema: validation (vision/VISION.md roadmap item 2's own schema-driven editor needs each field's Validate/Required to actually work) ---");
 {
     IVmService schemaService = new VmService();
@@ -1066,7 +1155,7 @@ Console.WriteLine("\n--- IEngine.GetConfigSchema: validation (vision/VISION.md r
     Console.WriteLine($"riscv-emu schema has a required Workload.KernelPath field: {kernelField.Required}");
 
     var qemuSchema = schemaService.GetConfigSchema("Qemu");
-    Console.WriteLine($"QEMU schema has no Workload.KernelPath field (not supported yet - see vision/NEXT.md): {!qemuSchema.Any(f => f.Key == "Workload.KernelPath")}");
+    Console.WriteLine($"QEMU schema also has a Workload.KernelPath field (v0.4.1 - -kernel is optional there, not required): {qemuSchema.Any(f => f.Key == "Workload.KernelPath" && !qemuSchema.First(f2 => f2.Key == "Workload.KernelPath").Required)}");
     var coresField = qemuSchema.First(f => f.Key == "Platform.CpuCores");
     Console.WriteLine($"  Validate(0) rejects zero CPU cores: {coresField.Validate?.Invoke(0) != null}");
     Console.WriteLine($"  Validate(1) accepts one core: {coresField.Validate?.Invoke(1) == null}");

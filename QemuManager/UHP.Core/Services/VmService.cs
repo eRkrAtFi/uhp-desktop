@@ -157,7 +157,7 @@ public class VmService : IVmService, IDisposable
                 _lastKnownState[vm.Id] = newState;
             }
             if (oldState != VmState.Stopped && newState == VmState.Stopped && !IsActionInProgress(vm.Id))
-                _history.RecordInstant("VM stopped", vm.Name, success: true, "Process exited.");
+                _history.RecordInstant("Environment stopped", vm.Name, success: true, "Process exited.");
         }
     }
 
@@ -369,7 +369,7 @@ public class VmService : IVmService, IDisposable
             // ShutdownResult's own remarks) - always false for QEMU, which
             // only ever reports "the ACPI request was sent", not whether
             // the guest actually powered off; that part, if/when it
-            // happens, is DetectUnexpectedStop's own "VM stopped" row, not
+            // happens, is DetectUnexpectedStop's own "Environment stopped" row, not
             // this task completing late.
             _history.CompleteTask(taskId, !result.TimedOut, result.Message);
             return result;

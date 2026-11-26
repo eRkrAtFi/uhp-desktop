@@ -59,13 +59,13 @@ public partial class MainWindow : Window
         {
             var result = MessageBox.Show(this,
                 "Found existing UHP data in %APPDATA%. Import it?\n\n" +
-                "Only VM configurations are imported - disk images are not copied and stay where they already are.",
+                "Only Environment configurations are imported - disk images are not copied and stay where they already are.",
                 "Import existing data?", MessageBoxButton.YesNo, MessageBoxImage.Question);
             if (result == MessageBoxResult.Yes)
             {
                 var imported = AppPaths.ImportLegacyConfigs(AppContext.BaseDirectory,
                     Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData));
-                _vmService.RecordTask("Import", "%APPDATA%", true, $"Imported {imported} VM configuration(s).");
+                _vmService.RecordTask("Import", "%APPDATA%", true, $"Imported {imported} Environment configuration(s).");
             }
         }
 
@@ -211,7 +211,7 @@ public partial class MainWindow : Window
             _vmService.Save(vm);
             _items.Add(new VmListItem(vm, _vmService));
             RefreshSummary();
-            _vmService.RecordTask("Create VM", vm.Name, true, $"Created VM '{vm.Name}'.");
+            _vmService.RecordTask("Create Environment", vm.Name, true, $"Created Environment '{vm.Name}'.");
         }
     }
 
@@ -221,7 +221,7 @@ public partial class MainWindow : Window
         if (item == null) return;
         if (_vmService.IsRunning(item.Config))
         {
-            _vmService.RecordTask("Edit VM", item.Config.Name, false, "Stop the VM before editing its configuration.");
+            _vmService.RecordTask("Edit Environment", item.Config.Name, false, "Stop the Environment before editing its configuration.");
             return;
         }
 
@@ -231,7 +231,7 @@ public partial class MainWindow : Window
         {
             _vmService.Save(item.Config);
             item.RefreshFromConfig();
-            _vmService.RecordTask("Edit VM", item.Config.Name, true, $"Saved VM '{item.Config.Name}'.");
+            _vmService.RecordTask("Edit Environment", item.Config.Name, true, $"Saved Environment '{item.Config.Name}'.");
         }
     }
 
@@ -241,18 +241,18 @@ public partial class MainWindow : Window
         if (item == null) return;
         if (_vmService.IsRunning(item.Config))
         {
-            _vmService.RecordTask("Delete VM", item.Config.Name, false, "Stop the VM before deleting it.");
+            _vmService.RecordTask("Delete Environment", item.Config.Name, false, "Stop the Environment before deleting it.");
             return;
         }
 
         var result = MessageBox.Show(this, $"Delete '{item.Config.Name}'? This removes its configuration, not any disk image.",
-            "Delete VM", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+            "Delete Environment", MessageBoxButton.YesNo, MessageBoxImage.Warning);
         if (result != MessageBoxResult.Yes) return;
 
         _vmService.Delete(item.Config);
         _items.Remove(item);
         RefreshSummary();
-        _vmService.RecordTask("Delete VM", item.Config.Name, true, $"Deleted VM '{item.Config.Name}'.");
+        _vmService.RecordTask("Delete Environment", item.Config.Name, true, $"Deleted Environment '{item.Config.Name}'.");
     }
 
     private async void StartButton_Click(object sender, RoutedEventArgs e)
@@ -344,7 +344,7 @@ public partial class MainWindow : Window
                 break;
             case ConsoleAvailability.ExternalWindow:
                 _vmService.RecordTask("Console", item.Config.Name, false,
-                    "Display is gtk/sdl - it shows its own window, not a console here. Edit the VM and set Display to 'console' to change that.");
+                    "Display is gtk/sdl - it shows its own window, not a console here. Edit the Environment and set Display to 'console' to change that.");
                 break;
         }
     }
@@ -406,7 +406,7 @@ public partial class MainWindow : Window
         // running/total summary moves to the Host page, where ESXi/Proxmox
         // would put host-level totals too.
         VmCountBadge.Text = _items.Count.ToString();
-        HostSummaryText.Text = $"{running} running / {_items.Count} total virtual machine{(_items.Count == 1 ? "" : "s")}.";
+        HostSummaryText.Text = $"{running} running / {_items.Count} total Environment{(_items.Count == 1 ? "" : "s")}.";
     }
 
     /// <summary>Toolbar buttons (and their context-menu mirrors) enable or

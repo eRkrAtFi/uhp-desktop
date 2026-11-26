@@ -18,7 +18,7 @@ public sealed class TaskRecord
 
     /// <summary>What kind of action this is - "Power On", "Shut Down",
     /// "Force Stop", "Create VM", "Edit VM", "Delete VM", "Create Disk",
-    /// "Console", or "VM stopped" for one this app itself did not
+    /// "Console", or "Environment stopped" for one this app itself did not
     /// initiate (see VmService's own unexpected-stop detector).</summary>
     public string Name { get; set; } = "";
 

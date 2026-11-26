@@ -11,7 +11,7 @@
   window.chrome.webview's own postMessage - WebView2 delivers a plain
   object both ways (no JSON.stringify/parse needed on either end):
     C# -> JS: {type:"output", data:"<base64>"}  - append guest bytes
-              {type:"stopped"}                   - show the "VM stopped" banner
+              {type:"stopped"}                   - show the "Environment stopped" banner
               {type:"clear"}                      - clear the scrollback
               {type:"enterSends", value:"CR"|"LF"|"CRLF"} - this VM's own
                 line-ending setting (VmConfig.EnterSends) - sent on every
@@ -48,7 +48,7 @@
 </head>
 <body>
 <div id="terminal"></div>
-<div id="stopped-banner">VM stopped - output above is the last the guest sent.</div>
+<div id="stopped-banner">Environment stopped - output above is the last the guest sent.</div>
 <script src="xterm/xterm.js"></script>
 <script src="xterm/addon-fit.js"></script>
 <script>

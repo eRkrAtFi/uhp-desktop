@@ -117,6 +117,16 @@ public class VmProcessManager : IEngine
         new() { Key = "Workload.BootOrder", Label = "Boot order", Type = FieldType.Text, Group = "Workload",
             Get = e => e.Workload.BootOrder, Set = (e, v) => e.Workload.BootOrder = (string)v!,
             Hint = "c = disk first, d = CD-ROM first, n = network" },
+        new() { Key = "Workload.KernelPath", Label = "Kernel Image", Type = FieldType.FilePath, Group = "Workload",
+            Get = e => e.Workload.KernelPath, Set = (e, v) => e.Workload.KernelPath = (string)v!,
+            FileFilter = "Linux kernel image (*.bin;*.elf;vmlinuz*;*.img)|*.bin;*.elf;vmlinuz*;*.img|All files (*.*)|*.*",
+            Hint = "Boots this kernel directly via -kernel, bypassing firmware/bootloader. Leave empty to boot normally from Disk image/CD-ROM instead." },
+        new() { Key = "Workload.InitrdPath", Label = "Initrd / initramfs", Type = FieldType.FilePath, Group = "Workload",
+            Get = e => e.Workload.InitrdPath, Set = (e, v) => e.Workload.InitrdPath = (string)v!,
+            FileFilter = "Initramfs (*.cpio.gz;*.cpio;*.img;*.gz)|*.cpio.gz;*.cpio;*.img;*.gz|All files (*.*)|*.*" },
+        new() { Key = "Workload.KernelCmdline", Label = "Kernel command line", Type = FieldType.Text, Group = "Workload",
+            Get = e => e.Workload.KernelCmdline, Set = (e, v) => e.Workload.KernelCmdline = (string)v!,
+            Hint = "Passed to the kernel via -append, e.g. \"console=ttyS0\". Only used when Kernel Image is set." },
         new() { Key = "Workload.ExtraArgs", Label = "Extra arguments", Type = FieldType.MultilineText, Group = "Workload",
             Get = e => e.Workload.ExtraArgs, Set = (e, v) => e.Workload.ExtraArgs = (string)v! },
         new() { Key = "Debug.Display", Label = "Display backend", Type = FieldType.Choice, Group = "Debug",
@@ -644,6 +654,20 @@ public class VmProcessManager : IEngine
             args.Add(vm.Workload.CdromPath);
         }
 
+        // Boots this kernel directly, bypassing firmware/bootloader -
+        // same -kernel/-initrd/-append trio riscv-emu's own --kernel/
+        // --initrd/--append always use, now first-class Workload fields
+        // for QEMU too instead of needing them hand-typed into
+        // ExtraArgs (see EnvironmentMigration's own v1-to-v2 step for
+        // an Environment that already had them there).
+        if (!string.IsNullOrWhiteSpace(vm.Workload.KernelPath))
+        {
+            args.Add("-kernel");
+            args.Add(vm.Workload.KernelPath);
+            if (!string.IsNullOrWhiteSpace(vm.Workload.InitrdPath)) { args.Add("-initrd"); args.Add(vm.Workload.InitrdPath); }
+            if (!string.IsNullOrWhiteSpace(vm.Workload.KernelCmdline)) { args.Add("-append"); args.Add(vm.Workload.KernelCmdline); }
+        }
+
         if (vm.Platform.NetworkMode == "user")
         {
             args.Add("-netdev");
@@ -658,7 +682,7 @@ public class VmProcessManager : IEngine
         }
 
         if (!string.IsNullOrWhiteSpace(vm.Workload.ExtraArgs))
-            args.AddRange(SplitArguments(vm.Workload.ExtraArgs));
+            args.AddRange(ArgumentTokenizer.Split(vm.Workload.ExtraArgs));
 
         return args;
     }
@@ -671,24 +695,4 @@ public class VmProcessManager : IEngine
         ".vhdx" => "vhdx",
         _ => "raw",
     };
-
-    /// <summary>Splits a free-form extra-arguments string on whitespace,
-    /// honoring double quotes - enough for the common case of a quoted path
-    /// containing spaces, without pulling in a full shell parser.</summary>
-    private static IEnumerable<string> SplitArguments(string input)
-    {
-        var current = new System.Text.StringBuilder();
-        var inQuotes = false;
-        foreach (var ch in input)
-        {
-            if (ch == '"') { inQuotes = !inQuotes; continue; }
-            if (char.IsWhiteSpace(ch) && !inQuotes)
-            {
-                if (current.Length > 0) { yield return current.ToString(); current.Clear(); }
-                continue;
-            }
-            current.Append(ch);
-        }
-        if (current.Length > 0) yield return current.ToString();
-    }
 }

@@ -25,23 +25,33 @@ public class Workload
     /// attached. Not used by riscv-emu.</summary>
     public string CdromPath { get; set; } = "";
 
-    /// <summary>Only meaningful for riscv-emu today: path to a riscv64
-    /// Linux "Image" file - the "Kernel / Bootloader" template's own
-    /// field.</summary>
+    /// <summary>Path to a kernel to boot directly - riscv-emu's own
+    /// riscv64 Linux "Image" file (always required - the "Kernel /
+    /// Bootloader" template's own field, and the only way that engine
+    /// boots anything), or QEMU's own -kernel (optional there - leave
+    /// empty to boot normally from Disk image/CD-ROM/firmware instead).</summary>
     public string KernelPath { get; set; } = "";
 
-    /// <summary>Only meaningful for riscv-emu today: path to an initramfs
-    /// (e.g. initramfs.cpio.gz). Empty means boot with no root filesystem
-    /// at all.</summary>
+    /// <summary>Path to an initramfs/initrd to go with KernelPath (e.g.
+    /// initramfs.cpio.gz) - QEMU's -initrd, or riscv-emu's own --initrd.
+    /// Empty means boot with no root filesystem at all.</summary>
     public string InitrdPath { get; set; } = "";
 
     /// <summary>Boot device order string passed to QEMU's -boot order=...,
     /// e.g. "cd" or "c". Not used by riscv-emu.</summary>
     public string BootOrder { get; set; } = "c";
 
-    /// <summary>Free-form extra arguments. For QEMU these are appended
-    /// verbatim to the command line; for riscv-emu they are appended to
-    /// the kernel boot command line (the DTB's /chosen/bootargs).</summary>
+    /// <summary>The kernel's own boot command line, when KernelPath is
+    /// set - QEMU's -append, or riscv-emu's own --append (its own kernel
+    /// cmdline always includes "console=ttyS0 earlycon=sbi" ahead of
+    /// whatever is here - see RiscvEmuBoot). Was called ExtraArgs for
+    /// riscv-emu before v0.4.1 - see EnvironmentMigration's own v1-to-v2
+    /// step for existing Environments that already had one saved.</summary>
+    public string KernelCmdline { get; set; } = "";
+
+    /// <summary>Free-form extra QEMU command-line flags, appended
+    /// verbatim - anything this app has no dedicated field for yet. Not
+    /// used by riscv-emu (nothing beyond KernelCmdline applies to it).</summary>
     public string ExtraArgs { get; set; } = "";
 
     /// <summary>Only meaningful for riscv-emu today: the line typed into

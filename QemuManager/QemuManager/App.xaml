@@ -25,6 +25,25 @@
         <SolidColorBrush x:Key="StatusTransition" Color="#E0A530"/>
         <SolidColorBrush x:Key="StatusStopped" Color="#9A9A9A"/>
 
+        <!-- A quiet keyboard-focus indicator - a thin accent-colored
+             outline, rounded to match whatever it sits on - instead of
+             WPF's default dashed black/white rectangle. Moved here (used
+             to live further down, TreeViewItem-only) so the Button style
+             below can reference it too - every toolbar button used to
+             show the system's own dashed rectangle on focus instead of
+             this, the one inconsistency left once TreeViewItem/DataGridRow
+             already had it. -->
+        <Style x:Key="SubtleFocusVisual">
+            <Setter Property="Control.Template">
+                <Setter.Value>
+                    <ControlTemplate>
+                        <Rectangle Margin="1" StrokeThickness="1.3" Stroke="{StaticResource Accent}"
+                                   RadiusX="5" RadiusY="5" SnapsToDevicePixels="True"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- VM detail page (Phase 3): switches between the live stats
              view and the stopped-VM config summary (BoolToVis/
              InverseBoolToVis on IsRunning), and hides the Guest Detail
@@ -103,6 +122,10 @@
             <Setter Property="FontSize" Value="12.5"/>
             <Setter Property="HorizontalContentAlignment" Value="Center"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <!-- Same reasoning as TreeViewItem's own identical setter -
+                 every button (toolbar, dialogs, everywhere) used to show
+                 the system's own dashed focus rectangle instead. -->
+            <Setter Property="FocusVisualStyle" Value="{StaticResource SubtleFocusVisual}"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
@@ -551,27 +574,18 @@
             <Setter Property="Cursor" Value="SizeNS"/>
         </Style>
 
-        <!-- A quiet keyboard-focus indicator - a thin accent-colored
-             outline, rounded to match the row it sits on - instead of
-             WPF's default dashed black/white rectangle (which, independent
-             of IsSelected, stays on whichever item last had logical focus;
-             a TreeView gives its first item that as soon as it loads, i.e.
-             "Host", even though nothing selected it - that was the real
-             cause of what first looked like "Host stuck with a darker
-             background even when Virtual Machines is selected"). Disabling
-             it outright (FocusVisualStyle="{x:Null}") fixed that same
-             symptom but threw away real keyboard-navigation feedback along
-             with it; this keeps the feedback, just restyled to fit. -->
-        <Style x:Key="SubtleFocusVisual">
-            <Setter Property="Control.Template">
-                <Setter.Value>
-                    <ControlTemplate>
-                        <Rectangle Margin="1" StrokeThickness="1.3" Stroke="{StaticResource Accent}"
-                                   RadiusX="5" RadiusY="5" SnapsToDevicePixels="True"/>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
+        <!-- SubtleFocusVisual itself now lives near the top of this file
+             (the Button style needs it too) - this note stays as the
+             fuller explanation of why it exists: WPF's own default dashed
+             black/white rectangle, independent of IsSelected, stays on
+             whichever item last had logical focus; a TreeView gives its
+             first item that as soon as it loads, i.e. "Host", even though
+             nothing selected it - that was the real cause of what first
+             looked like "Host stuck with a darker background even when
+             Virtual Machines is selected". Disabling it outright
+             (FocusVisualStyle="{x:Null}") fixed that same symptom but
+             threw away real keyboard-navigation feedback along with it;
+             SubtleFocusVisual keeps the feedback, just restyled to fit. -->
 
         <!-- Navigator tree (Phase 1) - a plain TreeViewItem restyle, same
              "flat, hoverable row" look as SidebarButton rather than the
