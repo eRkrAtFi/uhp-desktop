@@ -26,7 +26,14 @@ ELF = os.path.join(ROOT, "examples", "baremetal-hello", "hello.elf")
 RISCV_EMU = os.path.join(ROOT, "riscv-emu.exe")
 RISCV_EMU_PORT = 42424
 QEMU_PORT = 42425
-LLDB_TIMEOUT_SECONDS = 30
+# Generous, not tight: a loaded CI runner (this step follows the rest of
+# `make test-all`, including the slower kernel-boot-shaped tests) can
+# take noticeably longer than this same scenario does on a quiet dev
+# machine for every one of these - confirmed directly (CI's own first
+# run of this test timed out waiting on the child process with the
+# previous, tighter values).
+LLDB_TIMEOUT_SECONDS = 60
+PROCESS_EXIT_TIMEOUT_SECONDS = 20
 # A real probe connection cannot be used to wait for either server's own
 # listening socket to come up: riscv-emu's own GDB stub accepts exactly
 # one connection, ever (see src/gdbstub.c) - a probe that succeeds would
@@ -98,7 +105,22 @@ def main():
         time.sleep(STARTUP_WAIT_SECONDS)
         riscv_out = run_lldb(RISCV_EMU_PORT, ["x1", "x2", "x10", "pc"])
     finally:
-        riscv_proc.wait(timeout=10)
+        # By this point the guest has already run to completion and
+        # exited on its own (confirmed by the "continue" at the end of
+        # run_lldb's own command list) in the common case - this is a
+        # safety net for a slower CI runner, or lldb's own session not
+        # having finished cleanly, not the expected path. A bare
+        # riscv_proc.wait() with no terminate() first (what this used to
+        # be) raised TimeoutExpired straight out of this finally block on
+        # a loaded CI runner, which discards whatever exception (if any)
+        # was already propagating and replaces it with a confusing
+        # unrelated traceback - terminate() first, same as the QEMU leg
+        # below already does, so a plain timeout here is never fatal.
+        riscv_proc.terminate()
+        try:
+            riscv_proc.wait(timeout=PROCESS_EXIT_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            riscv_proc.kill()
 
     # --- QEMU leg: real ABI register names (ra/sp/a0/pc) - QEMU's own
     # gdbstub reports a different target.xml than ours, but the same
@@ -115,7 +137,7 @@ def main():
     finally:
         qemu_proc.terminate()
         try:
-            qemu_proc.wait(timeout=10)
+            qemu_proc.wait(timeout=PROCESS_EXIT_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired:
             qemu_proc.kill()
 
