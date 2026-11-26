@@ -72,7 +72,11 @@ public partial class EnvironmentEditWindow : Window
         // entirely, not shown as an empty heading.
         foreach (var group in CanonicalGroupOrder)
         {
-            var fieldsInGroup = schema.Where(f => f.Group == group).ToList();
+            // VisibleWhen filtered here, not inside AddFieldRow - so a
+            // group left with nothing visible (not possible for any
+            // schema today, but not assumed either) is skipped entirely
+            // rather than showing an empty heading.
+            var fieldsInGroup = schema.Where(f => f.Group == group && (f.VisibleWhen?.Invoke(env) ?? true)).ToList();
             if (fieldsInGroup.Count == 0) continue;
 
             FieldsPanel.Children.Add(new TextBlock { Text = group, Style = (Style)FindResource("GroupHeading") });
@@ -170,12 +174,15 @@ public partial class EnvironmentEditWindow : Window
 
     /// <summary>A field's own static Required flag, OR'd with
     /// DependsOn.IsRequired evaluated against whatever the depended-on
-    /// field's control currently shows - not a snapshot of _env, so
+    /// field's control currently shows (not a snapshot of _env, so
     /// changing Architecture and then immediately hitting Save sees the
-    /// just-changed value.</summary>
+    /// just-changed value) and with RequiredWhen evaluated against _env
+    /// directly (Workload.Kind, fixed for this editing session - see
+    /// ConfigField.RequiredWhen's own remarks).</summary>
     private bool IsRequiredNow(ConfigField field)
     {
         if (field.Required) return true;
+        if (field.RequiredWhen?.Invoke(_env) == true) return true;
         if (field.DependsOn?.IsRequired is { } isRequired && _rowsByKey.TryGetValue(field.DependsOn.OnKey, out var onRow))
             return isRequired(onRow.Read());
         return false;
@@ -203,7 +210,19 @@ public partial class EnvironmentEditWindow : Window
         var check = new CheckBox
         {
             IsChecked = field.Get(_env) is true,
-            Content = field.Hint ?? "",
+            // A plain string Content never wraps inside a CheckBox's own
+            // template (confirmed directly: a long hint like Debug.GdbEnabled's
+            // own just got clipped at the dialog's own edge) - a TextBlock
+            // does, as long as it is actually allowed to be narrower than
+            // its own text; VerticalAlignment=Center keeps it lined up with
+            // the checkbox glyph the same way the single-line case already
+            // was.
+            Content = new TextBlock
+            {
+                Text = field.Hint ?? "",
+                TextWrapping = TextWrapping.Wrap,
+                VerticalAlignment = VerticalAlignment.Center,
+            },
             Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xF1, 0xF1, 0xF1)),
         };
         // The hint is shown as the checkbox's own label here instead of a

@@ -109,6 +109,9 @@ public class VmProcessManager : IEngine
             ["riscv32"] = ("virt", "RISC-V has no default machine type - \"virt\" is QEMU's standard one."),
         };
 
+    private static bool IsLinuxKernel(EnvironmentConfig e) => e.Workload.Kind == WorkloadKind.LinuxKernel;
+    private static bool IsBareMetalElf(EnvironmentConfig e) => e.Workload.Kind == WorkloadKind.BareMetalElf;
+
     public IReadOnlyList<ConfigField> GetConfigSchema() => new List<ConfigField>
     {
         new() { Key = "Platform.Architecture", Label = "Architecture", Type = FieldType.Choice, Group = "Platform",
@@ -151,19 +154,23 @@ public class VmProcessManager : IEngine
         new() { Key = "Workload.KernelPath", Label = "Kernel Image", Type = FieldType.FilePath, Group = "Workload",
             Get = e => e.Workload.KernelPath, Set = (e, v) => e.Workload.KernelPath = (string)v!,
             FileFilter = "Linux kernel image (*.bin;*.elf;vmlinuz*;*.img)|*.bin;*.elf;vmlinuz*;*.img|All files (*.*)|*.*",
-            Hint = "Boots this kernel directly via -kernel, bypassing firmware/bootloader. Leave empty to boot normally from Disk image/CD-ROM instead." },
+            Hint = "Boots this kernel directly via -kernel, bypassing firmware/bootloader. Leave empty to boot normally from Disk image/CD-ROM instead.",
+            VisibleWhen = IsLinuxKernel },
         new() { Key = "Workload.InitrdPath", Label = "Initrd / initramfs", Type = FieldType.FilePath, Group = "Workload",
             Get = e => e.Workload.InitrdPath, Set = (e, v) => e.Workload.InitrdPath = (string)v!,
-            FileFilter = "Initramfs (*.cpio.gz;*.cpio;*.img;*.gz)|*.cpio.gz;*.cpio;*.img;*.gz|All files (*.*)|*.*" },
+            FileFilter = "Initramfs (*.cpio.gz;*.cpio;*.img;*.gz)|*.cpio.gz;*.cpio;*.img;*.gz|All files (*.*)|*.*",
+            VisibleWhen = IsLinuxKernel },
         new() { Key = "Workload.KernelCmdline", Label = "Kernel command line", Type = FieldType.Text, Group = "Workload",
             Get = e => e.Workload.KernelCmdline, Set = (e, v) => e.Workload.KernelCmdline = (string)v!,
-            Hint = "Passed to the kernel via -append, e.g. \"console=ttyS0\". Only used when Kernel Image is set." },
+            Hint = "Passed to the kernel via -append, e.g. \"console=ttyS0\". Only used when Kernel Image is set.",
+            VisibleWhen = IsLinuxKernel },
         new() { Key = "Workload.ExtraArgs", Label = "Extra arguments", Type = FieldType.MultilineText, Group = "Workload",
             Get = e => e.Workload.ExtraArgs, Set = (e, v) => e.Workload.ExtraArgs = (string)v! },
         new() { Key = "Workload.ElfPath", Label = "Bare-metal ELF", Type = FieldType.FilePath, Group = "Workload",
             Get = e => e.Workload.ElfPath, Set = (e, v) => e.Workload.ElfPath = (string)v!,
             FileFilter = "ELF files (*.elf)|*.elf|All files (*.*)|*.*",
-            Hint = "Runs this ELF directly, no kernel/firmware/bootloader at all (-bios none -kernel). Leave empty for every other template - not combinable with Kernel Image." },
+            Hint = "Runs this ELF directly, no kernel/firmware/bootloader at all (-bios none -kernel).",
+            VisibleWhen = IsBareMetalElf, RequiredWhen = IsBareMetalElf },
         new() { Key = "Debug.Display", Label = "Display backend", Type = FieldType.Choice, Group = "Debug",
             Get = e => e.Debug.Display, Set = (e, v) => e.Debug.Display = (string)v!,
             Choices = new[] { "gtk", "sdl", "console", "vnc" } },

@@ -82,28 +82,24 @@ public class RiscvEmuProcessManager : IEngine
 
     public IReadOnlyList<string> ListArchitectures(AppSettings settings) => new[] { "riscv64" };
 
+    private static bool IsLinuxKernel(EnvironmentConfig e) => e.Workload.Kind == WorkloadKind.LinuxKernel;
+    private static bool IsBareMetalElf(EnvironmentConfig e) => e.Workload.Kind == WorkloadKind.BareMetalElf;
+
     public IReadOnlyList<ConfigField> GetConfigSchema() => new List<ConfigField>
     {
-        // Listed before Workload.KernelPath - that field's own DependsOn
-        // resolves this one's live value, which (see
-        // EnvironmentEditWindow.AddFieldRow) only works when the
-        // depended-on field's row has already been built.
         new() { Key = "Workload.ElfPath", Label = "Bare-metal ELF", Type = FieldType.FilePath, Group = "Workload",
             Get = e => e.Workload.ElfPath, Set = (e, v) => e.Workload.ElfPath = (string)v!,
             FileFilter = "ELF files (*.elf)|*.elf|All files (*.*)|*.*",
-            Hint = "Runs this ELF directly (--elf), no kernel/firmware at all. Leave empty for every other template - not combinable with Kernel Image." },
+            Hint = "Runs this ELF directly (--elf), no kernel/firmware at all.",
+            VisibleWhen = IsBareMetalElf, RequiredWhen = IsBareMetalElf },
         new() { Key = "Workload.KernelPath", Label = "Kernel Image", Type = FieldType.FilePath, Group = "Workload",
             Get = e => e.Workload.KernelPath, Set = (e, v) => e.Workload.KernelPath = (string)v!,
             FileFilter = "Linux Image (Image;*.img;*.elf)|Image;*.img;*.elf|All files (*.*)|*.*",
-            // Required unless Workload.ElfPath is set (the "Bare-metal /
-            // Embedded" template boots an ELF directly instead - see
-            // ElfPath above) - every pre-M4 Environment still has an
-            // empty ElfPath, so this keeps today's "always required"
-            // behavior for every one of them.
-            DependsOn = new FieldDependency { OnKey = "Workload.ElfPath", IsRequired = elfPath => string.IsNullOrWhiteSpace(elfPath as string) } },
+            VisibleWhen = IsLinuxKernel, RequiredWhen = IsLinuxKernel },
         new() { Key = "Workload.InitrdPath", Label = "Initramfs", Type = FieldType.FilePath, Group = "Workload",
             Get = e => e.Workload.InitrdPath, Set = (e, v) => e.Workload.InitrdPath = (string)v!,
-            FileFilter = "Initramfs (*.cpio.gz;*.cpio;*.img)|*.cpio.gz;*.cpio;*.img|All files (*.*)|*.*" },
+            FileFilter = "Initramfs (*.cpio.gz;*.cpio;*.img)|*.cpio.gz;*.cpio;*.img|All files (*.*)|*.*",
+            VisibleWhen = IsLinuxKernel },
         new() { Key = "Workload.DiskPath", Label = "Disk image", Type = FieldType.FilePath, Group = "Workload",
             Get = e => e.Workload.DiskPath, Set = (e, v) => e.Workload.DiskPath = (string)v!,
             FileFilter = "Disk image (*.img;*.raw)|*.img;*.raw|All files (*.*)|*.*" },
@@ -115,10 +111,12 @@ public class RiscvEmuProcessManager : IEngine
             Hint = "Attach virtio-net (NATed through this host)." },
         new() { Key = "Workload.KernelCmdline", Label = "Kernel command line", Type = FieldType.Text, Group = "Workload",
             Get = e => e.Workload.KernelCmdline, Set = (e, v) => e.Workload.KernelCmdline = (string)v!,
-            Hint = "Appended to the kernel command line (console=ttyS0 earlycon=sbi is always set)." },
+            Hint = "Appended to the kernel command line (console=ttyS0 earlycon=sbi is always set).",
+            VisibleWhen = IsLinuxKernel },
         new() { Key = "Workload.ShutdownCommand", Label = "Shutdown command", Type = FieldType.Text, Group = "Workload",
             Get = e => e.Workload.ShutdownCommand, Set = (e, v) => e.Workload.ShutdownCommand = (string)v!, Required = true,
-            Hint = "Typed into the guest console when Shutdown is requested. Default (\"poweroff\") is verified against this project's own bundled Buildroot image - a guest with a different init system may need something else." },
+            Hint = "Typed into the guest console when Shutdown is requested. Default (\"poweroff\") is verified against this project's own bundled Buildroot image - a guest with a different init system may need something else.",
+            VisibleWhen = IsLinuxKernel },
         new() { Key = "Debug.EnterSends", Label = "Enter sends", Type = FieldType.Choice, Group = "Debug",
             Get = e => e.Debug.EnterSends, Set = (e, v) => e.Debug.EnterSends = (string)v!,
             Choices = new[] { "CR", "LF", "CRLF" },

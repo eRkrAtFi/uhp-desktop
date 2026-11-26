@@ -1235,6 +1235,67 @@ Console.WriteLine("\n--- ConfigField.DependsOn: Platform.MachineType required+de
     Console.WriteLine($"riscv-emu schema has no Platform.MachineType field: {!riscvSchemaForDep.Any(f => f.Key == "Platform.MachineType")}");
 }
 
+Console.WriteLine("\n--- ConfigField.VisibleWhen/RequiredWhen: Workload.Kind switches the editor between LinuxKernel and BareMetalElf fields (PR #2 feedback) ---");
+{
+    IVmService kindService = new VmService();
+
+    // The exact formulas EnvironmentEditWindow itself applies: the
+    // constructor's own group-building loop filters on VisibleWhen, and
+    // IsRequiredNow ORs Required/RequiredWhen/DependsOn.IsRequired
+    // together. Exercised here against the real schema and real
+    // EnvironmentConfig instances, not reimplemented - a regression in
+    // either formula would also break this.
+    bool IsVisible(ConfigField f, EnvironmentConfig e) => f.VisibleWhen?.Invoke(e) ?? true;
+    bool IsRequiredNow(ConfigField f, EnvironmentConfig e) =>
+        f.Required || (f.RequiredWhen?.Invoke(e) ?? false);
+
+    foreach (var engineId in new[] { "Qemu", "RiscvEmu" })
+    {
+        var schema = kindService.GetConfigSchema(engineId);
+        var elfField = schema.First(f => f.Key == "Workload.ElfPath");
+        var kernelField = schema.First(f => f.Key == "Workload.KernelPath");
+
+        var bareMetalEnv = new EnvironmentConfig { EngineId = engineId, Workload = new Workload { Kind = WorkloadKind.BareMetalElf } };
+        var linuxKernelEnv = new EnvironmentConfig { EngineId = engineId, Workload = new Workload { Kind = WorkloadKind.LinuxKernel } };
+
+        Console.WriteLine($"{engineId}: Bare-metal ELF visible for BareMetalElf: {IsVisible(elfField, bareMetalEnv)} (expected: True)");
+        Console.WriteLine($"{engineId}: Bare-metal ELF hidden for LinuxKernel: {!IsVisible(elfField, linuxKernelEnv)} (expected: True)");
+        Console.WriteLine($"{engineId}: Kernel Image hidden for BareMetalElf: {!IsVisible(kernelField, bareMetalEnv)} (expected: True)");
+        Console.WriteLine($"{engineId}: Kernel Image visible for LinuxKernel: {IsVisible(kernelField, linuxKernelEnv)} (expected: True)");
+
+        // "bare-metal prostredie bez ELF suboru sa neda ulozit" - an
+        // empty Bare-metal ELF field on a BareMetalElf Environment fails
+        // the same required-and-empty check OkButton_Click applies to
+        // every field.
+        var elfValue = (string?)elfField.Get(bareMetalEnv);
+        var failsValidation = IsRequiredNow(elfField, bareMetalEnv) && string.IsNullOrWhiteSpace(elfValue);
+        Console.WriteLine($"{engineId}: BareMetalElf with an empty Bare-metal ELF field fails validation: {failsValidation} (expected: True)");
+        elfField.Set(bareMetalEnv, "some.elf");
+        var passesOnceSet = !(IsRequiredNow(elfField, bareMetalEnv) && string.IsNullOrWhiteSpace((string?)elfField.Get(bareMetalEnv)));
+        Console.WriteLine($"{engineId}: BareMetalElf with the Bare-metal ELF field set passes validation: {passesOnceSet} (expected: True)");
+
+        if (engineId == "RiscvEmu")
+        {
+            // riscv-emu's own Workload.KernelPath is required for
+            // LinuxKernel (every pre-M4 Environment already had it set -
+            // QEMU's own Workload.KernelPath was never required, -kernel
+            // has always been optional there).
+            Console.WriteLine($"riscv-emu: Kernel Image required for LinuxKernel: {IsRequiredNow(kernelField, linuxKernelEnv)} (expected: True)");
+            var initrdField = schema.First(f => f.Key == "Workload.InitrdPath");
+            var cmdlineField = schema.First(f => f.Key == "Workload.KernelCmdline");
+            var shutdownField = schema.First(f => f.Key == "Workload.ShutdownCommand");
+            Console.WriteLine($"riscv-emu: Initramfs/Kernel command line/Shutdown command all hidden for BareMetalElf: {!IsVisible(initrdField, bareMetalEnv) && !IsVisible(cmdlineField, bareMetalEnv) && !IsVisible(shutdownField, bareMetalEnv)} (expected: True)");
+        }
+    }
+
+    // Workload.SupportsGracefulShutdown (used to gray out "Shut Down",
+    // leaving only Force Stop, for a bare-metal ELF - there is no OS/
+    // shell to type ShutdownCommand into and no ACPI handler to react to
+    // a QMP power button event either).
+    Console.WriteLine($"Workload.SupportsGracefulShutdown for BareMetalElf: {!new Workload { Kind = WorkloadKind.BareMetalElf }.SupportsGracefulShutdown} (expected: True - i.e. SupportsGracefulShutdown itself is False)");
+    Console.WriteLine($"Workload.SupportsGracefulShutdown for LinuxKernel: {new Workload { Kind = WorkloadKind.LinuxKernel }.SupportsGracefulShutdown} (expected: True)");
+}
+
 Console.WriteLine("\n--- Bare-metal ELF Environment: the example program runs on BOTH engines via IEngine/the schema (no EngineId branching), UART output matches (roadmap item 3, M4) ---");
 {
     var elfPath = Path.Combine(riscvEmuDir, "examples", "baremetal-hello", "hello.elf");
@@ -1259,7 +1320,7 @@ Console.WriteLine("\n--- Bare-metal ELF Environment: the example program runs on
             return bareMetalService.GetConsoleBuffer(env.Id);
         }
 
-        var riscvVm = new EnvironmentConfig { EngineId = "RiscvEmu", Name = "selftest-baremetal-riscv", Workload = new Workload { ElfPath = elfPath } };
+        var riscvVm = new EnvironmentConfig { EngineId = "RiscvEmu", Name = "selftest-baremetal-riscv", Workload = new Workload { Kind = WorkloadKind.BareMetalElf, ElfPath = elfPath } };
         var riscvOutput = await RunToCompletion(riscvVm, "riscv-emu");
         Console.WriteLine($"riscv-emu UART output: {riscvOutput.Replace("\n", "\\n").Replace("\r", "")}");
 
@@ -1270,7 +1331,7 @@ Console.WriteLine("\n--- Bare-metal ELF Environment: the example program runs on
                 EngineId = "Qemu",
                 Name = "selftest-baremetal-qemu",
                 Platform = new Platform { Architecture = "riscv64", MachineType = "virt", MemoryMB = 128, CpuCores = 1 },
-                Workload = new Workload { ElfPath = elfPath },
+                Workload = new Workload { Kind = WorkloadKind.BareMetalElf, ElfPath = elfPath },
                 Debug = new DebugConfiguration { Display = "console" },
             };
             var qemuOutput = await RunToCompletion(qemuVm, "QEMU");
