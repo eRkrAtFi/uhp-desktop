@@ -1598,6 +1598,48 @@ Console.WriteLine("\n--- Phase 6/PR #7: Storage page data gathering (IVmService.
     File.Delete(registeredDiskPath);
 }
 
+Console.WriteLine("\n--- PR #7 feedback (regression fix, round 2): migration also runs for an existing version-less disks.json ---");
+{
+    // The actual gap in the first fix: an intermediate build already
+    // shipped disks.json as a bare JSON array with no Version field at
+    // all (someone who used "Create disk"/"Add existing disk" against
+    // that build), so "only migrate if the file does not exist yet"
+    // never ran for them - their own pre-existing AppPaths.DisksDir
+    // disks ("Debian small" etc.) stayed invisible forever, not just
+    // until the next real migration. Writes that exact legacy shape by
+    // hand (one real entry already in it, simulating something that
+    // build had already registered) and confirms MigrateIfNeeded still
+    // runs for it, keeping that entry and adding what was missing.
+    var registryPath = AppPaths.DiskRegistryFile;
+    Directory.CreateDirectory(AppPaths.DisksDir);
+
+    var alreadyRegisteredDisk = Path.Combine(AppPaths.DisksDir, "selftest-already-registered.img");
+    File.WriteAllBytes(alreadyRegisteredDisk, new byte[1024]);
+    File.WriteAllText(registryPath, System.Text.Json.JsonSerializer.Serialize(new[] { alreadyRegisteredDisk }));
+
+    var missingDisk = Path.Combine(AppPaths.DisksDir, "selftest-missing-from-legacy-registry.img");
+    File.WriteAllBytes(missingDisk, new byte[1024]);
+
+    var legacyMigrationRegistry = new DiskRegistryStore();
+    legacyMigrationRegistry.MigrateIfNeeded(Array.Empty<string>());
+
+    var afterLegacyMigration = legacyMigrationRegistry.LoadAll();
+    Console.WriteLine($"Entry already in the version-less disks.json survives migration: {afterLegacyMigration.Any(p => string.Equals(Path.GetFullPath(p), Path.GetFullPath(alreadyRegisteredDisk), StringComparison.OrdinalIgnoreCase))} (expected: True)");
+    Console.WriteLine($"The disk missing from that legacy registry (but sitting in AppPaths.DisksDir) gets added: {afterLegacyMigration.Any(p => string.Equals(Path.GetFullPath(p), Path.GetFullPath(missingDisk), StringComparison.OrdinalIgnoreCase))} (expected: True)");
+
+    // Stamped now - a later Remove must stick, not get silently
+    // re-added by some future MigrateIfNeeded call the way a version-
+    // less file could never actually prevent.
+    legacyMigrationRegistry.Remove(missingDisk);
+    legacyMigrationRegistry.MigrateIfNeeded(Array.Empty<string>());
+    var afterSecondLegacyCall = legacyMigrationRegistry.LoadAll();
+    Console.WriteLine($"After being explicitly removed, it does not come back on a later MigrateIfNeeded call: {!afterSecondLegacyCall.Any(p => string.Equals(Path.GetFullPath(p), Path.GetFullPath(missingDisk), StringComparison.OrdinalIgnoreCase))} (expected: True)");
+
+    File.Delete(alreadyRegisteredDisk);
+    File.Delete(missingDisk);
+    legacyMigrationRegistry.Remove(alreadyRegisteredDisk);
+}
+
 Console.WriteLine("\n--- PR #7 feedback (regression fix): disk registry migration seeds pre-existing AppPaths.DisksDir files + Environment disks ---");
 {
     // Simulates "the registry file never existed yet at all" (e.g. an
