@@ -1598,6 +1598,57 @@ Console.WriteLine("\n--- Phase 6/PR #7: Storage page data gathering (IVmService.
     File.Delete(registeredDiskPath);
 }
 
+Console.WriteLine("\n--- PR #7 feedback (regression fix): disk registry migration seeds pre-existing AppPaths.DisksDir files + Environment disks ---");
+{
+    // Simulates "the registry file never existed yet at all" (e.g. an
+    // upgrade from before this feature shipped) - deletes it first,
+    // regardless of whatever earlier sections in this same run already
+    // registered, then calls MigrateIfNeeded directly with a
+    // controlled scenario: one disk already sitting in AppPaths.
+    // DisksDir (the actual regression report - "Debian small", "Debian
+    // test", etc. all vanished from Storage once the registry became
+    // the only source for "known but unreferenced"), and one disk an
+    // Environment references from somewhere else entirely.
+    var registryPath = AppPaths.DiskRegistryFile;
+    if (File.Exists(registryPath)) File.Delete(registryPath);
+
+    Directory.CreateDirectory(AppPaths.DisksDir);
+    var preExistingDisk = Path.Combine(AppPaths.DisksDir, "selftest-pre-existing.img");
+    File.WriteAllBytes(preExistingDisk, new byte[1024]);
+
+    var environmentOnlyDisk = Path.Combine(Path.GetTempPath(), "selftest-env-only-disk-" + Guid.NewGuid().ToString("N") + ".img");
+    File.WriteAllBytes(environmentOnlyDisk, new byte[1024]);
+
+    var migrationRegistry = new DiskRegistryStore();
+    migrationRegistry.MigrateIfNeeded(new[] { environmentOnlyDisk });
+
+    var afterMigration = migrationRegistry.LoadAll();
+    Console.WriteLine($"Pre-existing AppPaths.DisksDir file is in the registry after migration: {afterMigration.Any(p => string.Equals(Path.GetFullPath(p), Path.GetFullPath(preExistingDisk), StringComparison.OrdinalIgnoreCase))} (expected: True)");
+    Console.WriteLine($"Environment-only disk (outside DisksDir entirely) is in the registry too: {afterMigration.Any(p => string.Equals(Path.GetFullPath(p), Path.GetFullPath(environmentOnlyDisk), StringComparison.OrdinalIgnoreCase))} (expected: True)");
+
+    // Confirms this is genuinely a ONE-TIME migration, not something
+    // that keeps re-asserting the same files back on every later call -
+    // a real "Remove from list" afterward must stick.
+    migrationRegistry.Remove(preExistingDisk);
+    migrationRegistry.MigrateIfNeeded(new[] { environmentOnlyDisk });
+    var afterSecondCall = migrationRegistry.LoadAll();
+    Console.WriteLine($"MigrateIfNeeded does not re-add something already explicitly removed, on a later call (registry file already exists): {!afterSecondCall.Any(p => string.Equals(Path.GetFullPath(p), Path.GetFullPath(preExistingDisk), StringComparison.OrdinalIgnoreCase))} (expected: True)");
+
+    // End-to-end through the real facade: a fresh VmService (nothing of
+    // its own registered yet) still reports the pre-existing disk via
+    // GetDiskInventoryAsync, because LoadAll's own MigrateIfNeeded call
+    // already ran once for real, earlier in this very process (every
+    // IVmService instance shares the one AppPaths.DiskRegistryFile).
+    IVmService migrationFacade = new VmService();
+    migrationFacade.LoadAll();
+    var inventoryAfterMigration = await migrationFacade.GetDiskInventoryAsync(new AppSettings { QemuDir = qemuDir, RiscvEmuDir = riscvEmuDir });
+    Console.WriteLine($"GetDiskInventoryAsync reports the environment-only disk through the real facade: {inventoryAfterMigration.Any(d => string.Equals(Path.GetFullPath(d.Path), Path.GetFullPath(environmentOnlyDisk), StringComparison.OrdinalIgnoreCase))} (expected: True)");
+
+    migrationRegistry.Remove(environmentOnlyDisk);
+    File.Delete(preExistingDisk);
+    File.Delete(environmentOnlyDisk);
+}
+
 Console.WriteLine("\n--- PR #7 feedback (serious bug): Create disk must never silently overwrite an existing file ---");
 {
     IVmService overwriteService = new VmService();

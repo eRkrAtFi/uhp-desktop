@@ -24,7 +24,7 @@
         </Grid.ColumnDefinitions>
 
         <TextBlock Grid.Row="0" Grid.Column="0" Text="File"/>
-        <TextBox x:Name="PathBox" Grid.Row="0" Grid.Column="1"/>
+        <TextBox x:Name="PathBox" Grid.Row="0" Grid.Column="1" TextChanged="PathBox_TextChanged"/>
         <Button x:Name="BrowseButton" Grid.Row="0" Grid.Column="2" Content="Browse..." Click="BrowseButton_Click"/>
 
         <TextBlock Grid.Row="1" Grid.Column="0" Text="Size"/>

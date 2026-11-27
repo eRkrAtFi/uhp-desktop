@@ -283,6 +283,12 @@ public class VmService : IVmService, IDisposable
         var loaded = _store.LoadAll();
         foreach (var vm in loaded) TryReattach(vm);
         lock (_configsLock) { _configs.Clear(); _configs.AddRange(loaded); }
+        // One-time, no-op after the first real run - see
+        // DiskRegistryStore.MigrateIfNeeded's own remarks (PR #7
+        // feedback: a regression the registry itself introduced,
+        // disks already sitting in AppPaths.DisksDir before it existed
+        // otherwise simply vanished from the Storage page).
+        _diskRegistry.MigrateIfNeeded(loaded.Select(vm => vm.Workload.DiskPath));
         return loaded;
     }
 

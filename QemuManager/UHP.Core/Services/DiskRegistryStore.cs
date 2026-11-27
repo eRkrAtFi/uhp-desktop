@@ -47,6 +47,40 @@ public class DiskRegistryStore
         Save(all);
     }
 
+    /// <summary>One-time migration (PR #7 feedback - a regression this
+    /// registry itself caused): before it existed, GetDiskInventoryAsync
+    /// found every "known but unreferenced" disk by scanning
+    /// AppPaths.DisksDir directly; once the registry became the only
+    /// source for that, anything already sitting in DisksDir from
+    /// before this feature shipped simply vanished from the Storage
+    /// page's own list, with no way to get it back short of "Add
+    /// existing disk" one at a time. Runs only if the registry file
+    /// does not exist at all yet, so it can never re-run or clobber
+    /// anything a real session has already registered since - seeds it
+    /// with every file already in AppPaths.DisksDir, unioned with every
+    /// Environment's own current Workload.DiskPath (environmentDiskPaths -
+    /// a disk outside DisksDir some Environment already references is
+    /// tracked too, the same thing GetDiskInventoryAsync's own Track()
+    /// does for the live inventory). Called from VmService.LoadAll, the
+    /// first point _configs (and so every Environment's own DiskPath)
+    /// is actually known.</summary>
+    public void MigrateIfNeeded(IEnumerable<string> environmentDiskPaths)
+    {
+        if (File.Exists(AppPaths.DiskRegistryFile)) return;
+
+        var seed = new List<string>();
+        if (Directory.Exists(AppPaths.DisksDir))
+            seed.AddRange(Directory.EnumerateFiles(AppPaths.DisksDir));
+        seed.AddRange(environmentDiskPaths.Where(p => !string.IsNullOrWhiteSpace(p)));
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var result = new List<string>();
+        foreach (var path in seed)
+            if (seen.Add(Normalize(path))) result.Add(path);
+
+        Save(result);
+    }
+
     /// <summary>Removes path from the registry only - never touches the
     /// actual file (see Services.IVmService.RemoveDiskFromListAsync's
     /// own remarks on why "Remove from list" no longer deletes

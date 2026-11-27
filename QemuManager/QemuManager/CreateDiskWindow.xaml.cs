@@ -73,12 +73,22 @@ public partial class CreateDiskWindow : Window
             if (usedBy.Count > 0)
             {
                 ValidationText.Text = $"{path} already exists and is used by {string.Join(", ", usedBy)} - choose a different name.";
+                // Disabled until the path itself actually changes (see
+                // PathBox_TextChanged) - clicking Create again here
+                // would just show this exact same message again, not a
+                // different outcome.
+                CreateButton.IsEnabled = false;
                 return;
             }
             var confirm = MessageBox.Show(this,
                 $"{path} already exists and is not used by any Environment.\n\nOverwrite it?",
                 "File already exists", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-            if (confirm != MessageBoxResult.Yes) return;
+            if (confirm != MessageBoxResult.Yes)
+            {
+                ValidationText.Text = $"{path} already exists - choose a different name, or confirm overwriting it again.";
+                CreateButton.IsEnabled = false;
+                return;
+            }
             overwrite = true;
         }
 
@@ -104,6 +114,12 @@ public partial class CreateDiskWindow : Window
             ValidationText.Text = message;
         }
     }
+
+    /// <summary>Re-enables Create once the path actually changes after
+    /// being disabled by the "already exists" error above (PR #7
+    /// feedback) - otherwise it stayed disabled even after picking a
+    /// genuinely different, available name.</summary>
+    private void PathBox_TextChanged(object sender, TextChangedEventArgs e) => CreateButton.IsEnabled = true;
 
     private void CancelButton_Click(object sender, RoutedEventArgs e) => DialogResult = false;
 }
