@@ -464,6 +464,7 @@ static int reg_index(const char *name)
     return -1;
 }
 
+/* CI speed test: warm-cache timing verification for fix/ci-speed, PR to be closed without merging. */
 int main(int argc, char **argv)
 {
     Machine m;
