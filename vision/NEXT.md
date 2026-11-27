@@ -1,37 +1,40 @@
-# Next step: roadmap item 3 (RISC-V bare-metal / firmware slice)
+# Next step: roadmap item 4 (UEFI development on x86_64)
 
-With Steps A and B (vision/VISION.md's roadmap items 1 and 2 - the engine
-interface and the Environment/Platform/Workload model with one schema-
-driven editor) released as v0.4.0/v0.4.1/v0.4.2, the next step is roadmap
-item 3 itself: **RISC-V bare-metal environment with a GDB stub** - a
-Platform of RISC-V `virt`, a Workload that is a bare ELF file (no kernel,
-no initramfs), run on riscv-emu or QEMU (one switch between them), a UART
-console, and a GDB stub in riscv-emu for a debugger to attach to. The
-rest of this file is what that step actually needs to build.
+Roadmap item 3 (RISC-V bare-metal environment with a GDB stub) is done:
+`examples/baremetal-hello` (a tiny freestanding C program), `--elf` in
+riscv-emu (loads a real ELF64/EM_RISCV file by its own PT_LOAD program
+headers, starts at e_entry in M-mode), a GDB Remote Serial Protocol stub
+(`--gdb`/`--gdb-wait`, src/gdbstub.c) verified against real QEMU's own
+`-gdb`/`-S` through lldb (`make gdb-test`), and a "Bare-metal / Embedded"
+template in UHP wiring `Workload.ElfPath`/`Debug.GdbEnabled` through
+`IEngine`/the schema for both engines, no `EngineId` branching.
 
-Decided while building Step B's Environment/Platform/Workload model and
-its "New Environment" templates: **no "Bare-metal / Embedded" template
-yet**, and no bare-metal-specific fields on `Workload` yet either - only
-templates for things this app can actually run today ("Operating System"
-and "Kernel / Bootloader") are shown.
+Next, per vision/VISION.md's own roadmap: item 4, **UEFI development on
+x86_64** (QEMU, Q35, OVMF, NVRAM variables, GDB) - validates the firmware
+and NVRAM parts of the Environment/Platform/Workload model the same way
+item 3 validated the bare-metal/debugging parts.
 
-What bare-metal needs, when roadmap item 3 happens:
+## Known issue: `make gdb-test` skips on CI (lldb crashes there)
 
-- A workload shape for "just a raw binary/ELF, no kernel" - riscv-emu's
-  own CLI already supports this (a bare positional `<raw-binary>` loaded
-  at 0x80000000, or `--load <addr> <file> --entry <addr>` for placing one
-  or more files at explicit addresses) - `RiscvEmuBoot.Build` only ever
-  emits the `--kernel`/`--initrd` form today; it needs a second path for
-  this.
-- The "Bare-metal / Embedded" template itself, wired to that.
-- A GDB stub in riscv-emu (VISION.md's own roadmap item 3 names this
-  explicitly) - nothing in riscv-emu today exposes one.
-- Likely a new `Workload.Kind` (or similar discriminator) once there are
-  two genuinely different workload shapes (kernel+initramfs vs a single
-  binary/ELF at an address) instead of one flat set of optional fields -
-  decide the exact shape when the first real use case (an actual ELF to
-  run) exists, not speculatively now.
+CI's own choco-installed lldb.exe exits with an access violation
+(0xC0000005 - exit code 3221225781, no output at all) every time this
+has run on GitHub's windows-latest runner so far - `is_lldb_output_sane`
+in scripts/gdb-test.py already catches this and skips cleanly (not a
+failure), but the actual register/variable/alignment verification this
+test exists for never runs there, only locally. Worth fixing properly
+rather than leaving it permanently skipped - options, not yet tried:
 
-Until then, `Workload` is written to leave room for this (see its own
-class remarks in UHP.Core/Models/Workload.cs) without adding fields or
-UI that do nothing yet.
+- A different/newer lldb build (the one choco's `llvm` package installs
+  may simply be broken on that specific runner image - worth pinning a
+  specific version or trying a different package/installer).
+- Real `gdb` from MSYS2 instead of lldb - a completely different
+  client, sidesteps whatever is wrong with this particular lldb.exe
+  build entirely, but would need its own command syntax (gdb's own
+  batch-mode `-x`/`-batch`, not lldb's `-o`) alongside or instead of the
+  existing lldb-based script.
+- A minimal custom RSP client (Python, using the exact raw-socket
+  framing already prototyped by hand while building src/gdbstub.c -
+  send/recv $...#XX packets directly) instead of depending on a real
+  debugger binary at all - the most CI-robust option (nothing external
+  to crash), at the cost of not being a real end-to-end test of lldb/gdb
+  interoperability specifically.

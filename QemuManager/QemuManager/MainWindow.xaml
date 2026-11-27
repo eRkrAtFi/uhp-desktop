@@ -357,6 +357,22 @@
                                         </Border>
                                     </StackPanel>
 
+                                    <!-- GDB stub (roadmap item 3): shown only while running with
+                                         Debug.GdbEnabled - the ready-made lldb command is what a
+                                         person actually pastes into a terminal, not something to
+                                         retype from the bare host:port. -->
+                                    <Border Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" Padding="14,10" Margin="0,0,0,20"
+                                            Visibility="{Binding HasGdbEndpoint, Converter={StaticResource BoolToVis}}">
+                                        <StackPanel Orientation="Horizontal">
+                                            <StackPanel Margin="0,0,16,0" VerticalAlignment="Center">
+                                                <TextBlock Text="GDB" FontSize="11" Foreground="{StaticResource TextDim}"/>
+                                                <TextBlock Text="{Binding GdbEndpoint, StringFormat='GDB: {0}'}" FontSize="16" FontWeight="Bold"/>
+                                            </StackPanel>
+                                            <TextBlock Text="{Binding GdbAttachCommand}" FontFamily="Consolas" FontSize="12" Foreground="{StaticResource TextDim}" VerticalAlignment="Center" Margin="0,0,16,0"/>
+                                            <Button x:Name="DetailGdbCopyButton" Content="Copy lldb command" Click="GdbCopyButton_Click" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Border>
+
                                     <TextBlock Text="Performance" FontSize="16" FontWeight="Bold" Margin="0,0,0,8"/>
                                     <Border Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" Padding="16" Margin="0,0,0,20">
                                         <StackPanel>

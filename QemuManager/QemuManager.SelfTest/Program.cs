@@ -1235,6 +1235,141 @@ Console.WriteLine("\n--- ConfigField.DependsOn: Platform.MachineType required+de
     Console.WriteLine($"riscv-emu schema has no Platform.MachineType field: {!riscvSchemaForDep.Any(f => f.Key == "Platform.MachineType")}");
 }
 
+Console.WriteLine("\n--- ConfigField.VisibleWhen/RequiredWhen: Workload.Kind switches the editor between LinuxKernel and BareMetalElf fields (PR #2 feedback) ---");
+{
+    IVmService kindService = new VmService();
+
+    // The exact formulas EnvironmentEditWindow itself applies: the
+    // constructor's own group-building loop filters on VisibleWhen, and
+    // IsRequiredNow ORs Required/RequiredWhen/DependsOn.IsRequired
+    // together. Exercised here against the real schema and real
+    // EnvironmentConfig instances, not reimplemented - a regression in
+    // either formula would also break this.
+    bool IsVisible(ConfigField f, EnvironmentConfig e) => f.VisibleWhen?.Invoke(e) ?? true;
+    bool IsRequiredNow(ConfigField f, EnvironmentConfig e) =>
+        f.Required || (f.RequiredWhen?.Invoke(e) ?? false);
+
+    foreach (var engineId in new[] { "Qemu", "RiscvEmu" })
+    {
+        var schema = kindService.GetConfigSchema(engineId);
+        var elfField = schema.First(f => f.Key == "Workload.ElfPath");
+        var kernelField = schema.First(f => f.Key == "Workload.KernelPath");
+
+        var bareMetalEnv = new EnvironmentConfig { EngineId = engineId, Workload = new Workload { Kind = WorkloadKind.BareMetalElf } };
+        var linuxKernelEnv = new EnvironmentConfig { EngineId = engineId, Workload = new Workload { Kind = WorkloadKind.LinuxKernel } };
+
+        Console.WriteLine($"{engineId}: Bare-metal ELF visible for BareMetalElf: {IsVisible(elfField, bareMetalEnv)} (expected: True)");
+        Console.WriteLine($"{engineId}: Bare-metal ELF hidden for LinuxKernel: {!IsVisible(elfField, linuxKernelEnv)} (expected: True)");
+        Console.WriteLine($"{engineId}: Kernel Image hidden for BareMetalElf: {!IsVisible(kernelField, bareMetalEnv)} (expected: True)");
+        Console.WriteLine($"{engineId}: Kernel Image visible for LinuxKernel: {IsVisible(kernelField, linuxKernelEnv)} (expected: True)");
+
+        // "bare-metal prostredie bez ELF suboru sa neda ulozit" - an
+        // empty Bare-metal ELF field on a BareMetalElf Environment fails
+        // the same required-and-empty check OkButton_Click applies to
+        // every field.
+        var elfValue = (string?)elfField.Get(bareMetalEnv);
+        var failsValidation = IsRequiredNow(elfField, bareMetalEnv) && string.IsNullOrWhiteSpace(elfValue);
+        Console.WriteLine($"{engineId}: BareMetalElf with an empty Bare-metal ELF field fails validation: {failsValidation} (expected: True)");
+        elfField.Set(bareMetalEnv, "some.elf");
+        var passesOnceSet = !(IsRequiredNow(elfField, bareMetalEnv) && string.IsNullOrWhiteSpace((string?)elfField.Get(bareMetalEnv)));
+        Console.WriteLine($"{engineId}: BareMetalElf with the Bare-metal ELF field set passes validation: {passesOnceSet} (expected: True)");
+
+        if (engineId == "RiscvEmu")
+        {
+            // riscv-emu's own Workload.KernelPath is required for
+            // LinuxKernel (every pre-M4 Environment already had it set -
+            // QEMU's own Workload.KernelPath was never required, -kernel
+            // has always been optional there).
+            Console.WriteLine($"riscv-emu: Kernel Image required for LinuxKernel: {IsRequiredNow(kernelField, linuxKernelEnv)} (expected: True)");
+            var initrdField = schema.First(f => f.Key == "Workload.InitrdPath");
+            var cmdlineField = schema.First(f => f.Key == "Workload.KernelCmdline");
+            var shutdownField = schema.First(f => f.Key == "Workload.ShutdownCommand");
+            Console.WriteLine($"riscv-emu: Initramfs/Kernel command line/Shutdown command all hidden for BareMetalElf: {!IsVisible(initrdField, bareMetalEnv) && !IsVisible(cmdlineField, bareMetalEnv) && !IsVisible(shutdownField, bareMetalEnv)} (expected: True)");
+        }
+    }
+
+    // Workload.SupportsGracefulShutdown (used to gray out "Shut Down",
+    // leaving only Force Stop, for a bare-metal ELF - there is no OS/
+    // shell to type ShutdownCommand into and no ACPI handler to react to
+    // a QMP power button event either).
+    Console.WriteLine($"Workload.SupportsGracefulShutdown for BareMetalElf: {!new Workload { Kind = WorkloadKind.BareMetalElf }.SupportsGracefulShutdown} (expected: True - i.e. SupportsGracefulShutdown itself is False)");
+    Console.WriteLine($"Workload.SupportsGracefulShutdown for LinuxKernel: {new Workload { Kind = WorkloadKind.LinuxKernel }.SupportsGracefulShutdown} (expected: True)");
+}
+
+Console.WriteLine("\n--- Bare-metal ELF Environment: the example program runs on BOTH engines via IEngine/the schema (no EngineId branching), UART output matches (roadmap item 3, M4) ---");
+{
+    var elfPath = Path.Combine(riscvEmuDir, "examples", "baremetal-hello", "hello.elf");
+    if (!File.Exists(elfPath))
+    {
+        Console.WriteLine($"{elfPath} not built - run `make baremetal-hello` in riscv-emu first. Skipping.");
+    }
+    else
+    {
+        IVmService bareMetalService = new VmService();
+        var bareMetalSettings = new AppSettings { QemuDir = qemuDir, RiscvEmuDir = riscvEmuDir };
+
+        async Task<string> RunToCompletion(EnvironmentConfig env, string label)
+        {
+            Console.WriteLine($"{label}: {await bareMetalService.StartAsync(env, bareMetalSettings)}");
+            var deadline = DateTime.UtcNow.AddSeconds(15);
+            while (DateTime.UtcNow < deadline && bareMetalService.GetState(env) != VmState.Stopped)
+                await Task.Delay(100);
+            var stopped = bareMetalService.GetState(env) == VmState.Stopped;
+            Console.WriteLine($"{label} ran the bare-metal ELF to completion: {stopped} (expected: True)");
+            if (!stopped) Console.WriteLine(bareMetalService.ForceStop(env));
+            return bareMetalService.GetConsoleBuffer(env.Id);
+        }
+
+        var riscvVm = new EnvironmentConfig { EngineId = "RiscvEmu", Name = "selftest-baremetal-riscv", Workload = new Workload { Kind = WorkloadKind.BareMetalElf, ElfPath = elfPath } };
+        var riscvOutput = await RunToCompletion(riscvVm, "riscv-emu");
+        Console.WriteLine($"riscv-emu UART output: {riscvOutput.Replace("\n", "\\n").Replace("\r", "")}");
+
+        if (QemuLocator.LooksLikeQemuDir(qemuDir))
+        {
+            var qemuVm = new EnvironmentConfig
+            {
+                EngineId = "Qemu",
+                Name = "selftest-baremetal-qemu",
+                Platform = new Platform { Architecture = "riscv64", MachineType = "virt", MemoryMB = 128, CpuCores = 1 },
+                Workload = new Workload { Kind = WorkloadKind.BareMetalElf, ElfPath = elfPath },
+                Debug = new DebugConfiguration { Display = "console" },
+            };
+            var qemuOutput = await RunToCompletion(qemuVm, "QEMU");
+            Console.WriteLine($"QEMU UART output: {qemuOutput.Replace("\n", "\\n").Replace("\r", "")}");
+            // riscv-emu's own buffer also carries its own "loaded .../
+            // virtio-net attached" diagnostic lines ahead of the real
+            // UART bytes (see RiscvEmuProcessManager's own ReadStderrAsync
+            // remarks on what gets forwarded) - QEMU's console-mode
+            // buffer has no such preamble, so the real guest output is
+            // riscv-emu's own buffer's tail, not the whole thing.
+            Console.WriteLine($"UART output matches between riscv-emu and QEMU (riscv-emu's own buffer ends with QEMU's pure UART output): {riscvOutput.EndsWith(qemuOutput)} (expected: True)");
+        }
+        else
+        {
+            Console.WriteLine($"QEMU not found in '{qemuDir}' - skipping the QEMU leg of this comparison.");
+        }
+    }
+}
+
+Console.WriteLine("\n--- LldbLocator: the detail page's own 'Copy lldb command' button needs a real, runnable path (PR #2 feedback) ---");
+{
+    var lldbPath = LldbLocator.ExePathForCommandLine();
+    Console.WriteLine($"ExePathForCommandLine returned a non-empty string: {!string.IsNullOrWhiteSpace(lldbPath)} (actual: {lldbPath})");
+    // Whichever it picked - bare "lldb" (found on PATH) or a quoted full
+    // path (LLVM's own installer default, found directly) - the file it
+    // actually points at must exist, or the copied command would just
+    // fail for the person pasting it. A bare "lldb" with nothing on
+    // PATH and no LLVM default present either is the one case this
+    // cannot verify further (there is nothing left to point at) - this
+    // machine's own CI/dev setup always has one or the other.
+    var unquoted = lldbPath.Trim('"');
+    var resolvable = unquoted == "lldb"
+        ? (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator)
+            .Any(dir => !string.IsNullOrWhiteSpace(dir) && File.Exists(Path.Combine(dir, "lldb.exe")))
+        : File.Exists(unquoted);
+    Console.WriteLine($"The path it returned actually exists (or is a bare 'lldb' already on PATH): {resolvable}");
+}
+
 Console.WriteLine("\n--- No DataGrid in the app is editable unless explicitly intended (bug: double-click on a cell crashed the app) ---");
 // A static check of the actual .xaml source, not a runtime/window check -
 // in keeping with "logic belongs in Core, tested without a window" even

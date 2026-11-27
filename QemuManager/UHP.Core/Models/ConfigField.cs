@@ -64,12 +64,33 @@ public sealed class ConfigField
     public Func<object?, string?>? Validate { get; init; }
 
     /// <summary>This field's own Required-ness, suggested default, and
-    /// hint can depend on another field's current value (e.g.
-    /// Platform.MachineType is required, and has a suggested default,
-    /// only for certain Platform.Architecture values) - see
-    /// <see cref="FieldDependency"/>. Null for a field with no such
-    /// dependency (most of them).</summary>
+    /// hint can depend on another VISIBLE, interactively-changeable
+    /// field's current value (e.g. Platform.MachineType is required, and
+    /// has a suggested default, only for certain Platform.Architecture
+    /// values) - see <see cref="FieldDependency"/>. Null for a field with
+    /// no such dependency (most of them). Resolved live against whatever
+    /// control is showing OnKey's value, reactively (OnFieldChanged) -
+    /// unlike VisibleWhen/RequiredWhen below, which are evaluated once,
+    /// statically, against the whole EnvironmentConfig.</summary>
     public FieldDependency? DependsOn { get; init; }
+
+    /// <summary>Whether this field's own row is shown at all, decided
+    /// once when the editor opens from the whole EnvironmentConfig being
+    /// edited - null means always visible. For a field whose relevance
+    /// depends on Workload.Kind (e.g. Workload.ElfPath only for
+    /// WorkloadKind.BareMetalElf) rather than on another interactively-
+    /// changeable field: Workload.Kind is set once, by whichever New
+    /// Environment template was used, and never changed from within the
+    /// editor itself, so this never needs DependsOn's own reactive
+    /// machinery (no row/OnFieldChanged wiring - there is nothing in the
+    /// UI that could ever change Kind to react to).</summary>
+    public Func<EnvironmentConfig, bool>? VisibleWhen { get; init; }
+
+    /// <summary>Same idea as VisibleWhen, for Required-ness that depends
+    /// on the whole EnvironmentConfig rather than on another field's live
+    /// UI value - checked in addition to (not instead of) Required and
+    /// DependsOn.IsRequired.</summary>
+    public Func<EnvironmentConfig, bool>? RequiredWhen { get; init; }
 }
 
 /// <summary>Ties one ConfigField's Required/default/hint to another

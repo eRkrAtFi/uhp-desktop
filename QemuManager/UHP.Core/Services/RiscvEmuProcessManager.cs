@@ -21,6 +21,11 @@ public class RunningRiscvEmu
     public required Process Process { get; init; }
     public RiscvEmuRunState State { get; set; } = RiscvEmuRunState.Running;
 
+    /// <summary>Set when this Environment was started with
+    /// Debug.GdbEnabled - the actual resolved port (see
+    /// VmProcessManager.RunningVm.GdbPort's own identical remarks).</summary>
+    public int? GdbPort { get; init; }
+
     /// <summary>Previous CPU-time sample - see RiscvEmuProcessManager.GetResourceUsage.</summary>
     public TimeSpan LastCpuTime { get; set; }
     public DateTime LastSampleTime { get; set; } = DateTime.UtcNow;
@@ -65,7 +70,8 @@ public class RiscvEmuProcessManager : IEngine
         SupportsNetwork: true,
         SupportsSmp: false,
         SupportsGuestDetail: false,
-        SupportsSpeedMetric: true);
+        SupportsSpeedMetric: true,
+        SupportsBareMetalElf: true);
 
     public bool CanHandle(EnvironmentConfig env) => env.EngineId == Id;
 
@@ -76,14 +82,24 @@ public class RiscvEmuProcessManager : IEngine
 
     public IReadOnlyList<string> ListArchitectures(AppSettings settings) => new[] { "riscv64" };
 
+    private static bool IsLinuxKernel(EnvironmentConfig e) => e.Workload.Kind == WorkloadKind.LinuxKernel;
+    private static bool IsBareMetalElf(EnvironmentConfig e) => e.Workload.Kind == WorkloadKind.BareMetalElf;
+
     public IReadOnlyList<ConfigField> GetConfigSchema() => new List<ConfigField>
     {
+        new() { Key = "Workload.ElfPath", Label = "Bare-metal ELF", Type = FieldType.FilePath, Group = "Workload",
+            Get = e => e.Workload.ElfPath, Set = (e, v) => e.Workload.ElfPath = (string)v!,
+            FileFilter = "ELF files (*.elf)|*.elf|All files (*.*)|*.*",
+            Hint = "Runs this ELF directly (--elf), no kernel/firmware at all.",
+            VisibleWhen = IsBareMetalElf, RequiredWhen = IsBareMetalElf },
         new() { Key = "Workload.KernelPath", Label = "Kernel Image", Type = FieldType.FilePath, Group = "Workload",
-            Get = e => e.Workload.KernelPath, Set = (e, v) => e.Workload.KernelPath = (string)v!, Required = true,
-            FileFilter = "Linux Image (Image;*.img;*.elf)|Image;*.img;*.elf|All files (*.*)|*.*" },
+            Get = e => e.Workload.KernelPath, Set = (e, v) => e.Workload.KernelPath = (string)v!,
+            FileFilter = "Linux Image (Image;*.img;*.elf)|Image;*.img;*.elf|All files (*.*)|*.*",
+            VisibleWhen = IsLinuxKernel, RequiredWhen = IsLinuxKernel },
         new() { Key = "Workload.InitrdPath", Label = "Initramfs", Type = FieldType.FilePath, Group = "Workload",
             Get = e => e.Workload.InitrdPath, Set = (e, v) => e.Workload.InitrdPath = (string)v!,
-            FileFilter = "Initramfs (*.cpio.gz;*.cpio;*.img)|*.cpio.gz;*.cpio;*.img|All files (*.*)|*.*" },
+            FileFilter = "Initramfs (*.cpio.gz;*.cpio;*.img)|*.cpio.gz;*.cpio;*.img|All files (*.*)|*.*",
+            VisibleWhen = IsLinuxKernel },
         new() { Key = "Workload.DiskPath", Label = "Disk image", Type = FieldType.FilePath, Group = "Workload",
             Get = e => e.Workload.DiskPath, Set = (e, v) => e.Workload.DiskPath = (string)v!,
             FileFilter = "Disk image (*.img;*.raw)|*.img;*.raw|All files (*.*)|*.*" },
@@ -95,14 +111,25 @@ public class RiscvEmuProcessManager : IEngine
             Hint = "Attach virtio-net (NATed through this host)." },
         new() { Key = "Workload.KernelCmdline", Label = "Kernel command line", Type = FieldType.Text, Group = "Workload",
             Get = e => e.Workload.KernelCmdline, Set = (e, v) => e.Workload.KernelCmdline = (string)v!,
-            Hint = "Appended to the kernel command line (console=ttyS0 earlycon=sbi is always set)." },
+            Hint = "Appended to the kernel command line (console=ttyS0 earlycon=sbi is always set).",
+            VisibleWhen = IsLinuxKernel },
         new() { Key = "Workload.ShutdownCommand", Label = "Shutdown command", Type = FieldType.Text, Group = "Workload",
             Get = e => e.Workload.ShutdownCommand, Set = (e, v) => e.Workload.ShutdownCommand = (string)v!, Required = true,
-            Hint = "Typed into the guest console when Shutdown is requested. Default (\"poweroff\") is verified against this project's own bundled Buildroot image - a guest with a different init system may need something else." },
+            Hint = "Typed into the guest console when Shutdown is requested. Default (\"poweroff\") is verified against this project's own bundled Buildroot image - a guest with a different init system may need something else.",
+            VisibleWhen = IsLinuxKernel },
         new() { Key = "Debug.EnterSends", Label = "Enter sends", Type = FieldType.Choice, Group = "Debug",
             Get = e => e.Debug.EnterSends, Set = (e, v) => e.Debug.EnterSends = (string)v!,
             Choices = new[] { "CR", "LF", "CRLF" },
             Hint = "Change this only if Enter in the console does not submit a line - most guests need no change." },
+        new() { Key = "Debug.GdbEnabled", Label = "GDB stub", Type = FieldType.Bool, Group = "Debug",
+            Get = e => e.Debug.GdbEnabled, Set = (e, v) => e.Debug.GdbEnabled = (bool)v!,
+            Hint = "Serve a GDB Remote Serial Protocol stub on 127.0.0.1 (loopback only, --gdb) - attach with lldb/gdb's own 'gdb-remote'/'target remote'." },
+        new() { Key = "Debug.GdbPort", Label = "GDB port", Type = FieldType.Int, Group = "Debug",
+            Get = e => e.Debug.GdbPort, Set = (e, v) => e.Debug.GdbPort = (int)v!,
+            Hint = "0 picks any free port automatically - only set a specific one if something else needs to know it in advance." },
+        new() { Key = "Debug.GdbWaitForDebugger", Label = "Wait for debugger", Type = FieldType.Bool, Group = "Debug",
+            Get = e => e.Debug.GdbWaitForDebugger, Set = (e, v) => e.Debug.GdbWaitForDebugger = (bool)v!,
+            Hint = "Stop before the first instruction (--gdb-wait) instead of running immediately once a debugger attaches - recommended for a short program, so a breakpoint can be set before it has already finished." },
     };
 
     public VmState GetVmState(string vmId) => GetState(vmId) switch
@@ -174,10 +201,14 @@ public class RiscvEmuProcessManager : IEngine
     {
         if (IsRunning(vm.Id)) return "Already running.";
 
+        // Debug.GdbPort == 0 means "pick any free port", same convention
+        // VmProcessManager's own vncPort/gdbPort resolution uses.
+        var gdbPort = vm.Debug.GdbEnabled ? (vm.Debug.GdbPort != 0 ? vm.Debug.GdbPort : GetFreeTcpPort()) : (int?)null;
+
         RiscvEmuBoot.BuildResult build;
         try
         {
-            build = RiscvEmuBoot.Build(vm, riscvEmuDir);
+            build = RiscvEmuBoot.Build(vm, riscvEmuDir, gdbPort);
         }
         catch (Exception ex)
         {
@@ -206,7 +237,7 @@ public class RiscvEmuProcessManager : IEngine
             return $"Failed to start riscv-emu: {ex.Message}";
         }
 
-        var running = new RunningRiscvEmu { Process = process, State = RiscvEmuRunState.Running };
+        var running = new RunningRiscvEmu { Process = process, State = RiscvEmuRunState.Running, GdbPort = gdbPort };
         _running[vm.Id] = running;
         process.EnableRaisingEvents = true;
         process.Exited += (_, _) => OnProcessExited(vm.Id);
@@ -218,6 +249,7 @@ public class RiscvEmuProcessManager : IEngine
         {
             Pid = process.Id,
             ProcessName = process.ProcessName,
+            GdbPort = gdbPort,
         });
 
         // UART output (the guest console) goes to riscv-emu's own stdout,
@@ -230,8 +262,25 @@ public class RiscvEmuProcessManager : IEngine
         _ = ReadStderrAsync(vm.Id, process.StandardError);
 
         StateChanged?.Invoke();
-        return "Started.";
+        return gdbPort.HasValue
+            ? $"Started. GDB: 127.0.0.1:{gdbPort} - attach with lldb/gdb's own 'gdb-remote'/'target remote'."
+            : "Started.";
     }
+
+    private static int GetFreeTcpPort()
+    {
+        var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        return port;
+    }
+
+    /// <summary>The "host:port" a running Environment's GDB stub is
+    /// listening on, or null if Debug.GdbEnabled was not set (or it is
+    /// not running at all). Same role as VmProcessManager.GetGdbEndpoint.</summary>
+    public string? GetGdbEndpoint(string vmId) =>
+        _running.TryGetValue(vmId, out var running) && running.GdbPort is { } port ? $"127.0.0.1:{port}" : null;
 
     /// <summary>Sends raw bytes to the guest's console input (riscv-emu's
     /// UART now has a real receive side - see riscv-emu/README.md's
@@ -433,6 +482,7 @@ public class RiscvEmuProcessManager : IEngine
             Process = process,
             State = RiscvEmuRunState.Running,
             LastCpuTime = process.TotalProcessorTime,
+            GdbPort = state.GdbPort,
         };
         _running[vm.Id] = running;
         process.EnableRaisingEvents = true;

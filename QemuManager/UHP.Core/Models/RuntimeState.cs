@@ -32,5 +32,12 @@ public class RuntimeState
     /// RiscvEmu VM.</summary>
     public int? VncPort { get; set; }
 
+    /// <summary>The resolved GDB stub port (see
+    /// VmProcessManager/RiscvEmuProcessManager.RunningVm's own GdbPort),
+    /// so a reattached Environment started with Debug.GdbEnabled can
+    /// still report where to attach a debugger. Null unless
+    /// Debug.GdbEnabled was set.</summary>
+    public int? GdbPort { get; set; }
+
     public DateTime StartedUtc { get; set; } = DateTime.UtcNow;
 }

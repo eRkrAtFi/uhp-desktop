@@ -419,6 +419,8 @@ public class VmService : IVmService, IDisposable
     public (ConsoleAvailability kind, string? detail) GetConsoleAvailability(EnvironmentConfig vm) =>
         _engines.GetFor(vm).GetConsoleAvailability(vm);
 
+    public string? GetGdbEndpoint(EnvironmentConfig vm) => _engines.GetFor(vm).GetGdbEndpoint(vm.Id);
+
     public bool TryReattach(EnvironmentConfig vm) => _engines.GetFor(vm).TryReattach(vm);
 
     private async Task PollStatsAsync()

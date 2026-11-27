@@ -20,7 +20,7 @@ QEMU     ?= qemu-system-riscv64
 GUEST_FLAGS := --target=riscv64-unknown-elf -march=rv64im -mabi=lp64 -mno-relax \
                -nostdlib -static -Wl,-T,tests/link.ld
 
-SRC := src/cpu.c src/devices.c src/main.c src/net.c src/dtb.c
+SRC := src/cpu.c src/devices.c src/main.c src/net.c src/dtb.c src/gdbstub.c
 HDR := src/emu.h
 BIN := riscv-emu.exe
 # virtio-net's user-mode NAT backend (src/net.c): Winsock for the actual
@@ -64,6 +64,52 @@ boot/firmware.bin: boot/firmware.elf
 	$(OBJCOPY) -O binary $< $@
 
 firmware: boot/firmware.bin
+
+# vision/VISION.md roadmap item 3, M1: a tiny bare-metal example program,
+# no kernel/firmware/SBI involved at all - built with its own linker
+# script (examples/baremetal-hello/link.ld), not tests/link.ld, since
+# nothing here is a differential-against-a-flat-binary test the way
+# tests/*.S are.
+# -mcmodel=medany: same reason tests/virtio_test.c's own VIRTIO_FLAGS
+# needs it - this is a C file, and the default code model's gp-relative
+# addressing for globals/string literals cannot be resolved without a
+# real gp-initializing crt0, which this freestanding environment has
+# none of (confirmed the identical way: R_RISCV_HI20 out of range
+# without it).
+# -g -O0: this example exists to be debugged (vision/VISION.md roadmap
+# item 3's own GDB stub work) - without them lldb has no source lines or
+# local variables to show at all, only raw disassembly. -O0 (not -Og)
+# keeps the control flow exactly as written, line for line, with no
+# optimizer reordering a step/next command could ever look confusing
+# next to.
+BAREMETAL_FLAGS := --target=riscv64-unknown-elf -march=rv64im -mabi=lp64 -mcmodel=medany -mno-relax \
+                    -g -O0 -nostdlib -static -Wl,-T,examples/baremetal-hello/link.ld
+
+examples/baremetal-hello/hello.elf: examples/baremetal-hello/start.S examples/baremetal-hello/hello.c examples/baremetal-hello/link.ld
+	$(CLANG) $(BAREMETAL_FLAGS) -fuse-ld=lld -o $@ examples/baremetal-hello/start.S examples/baremetal-hello/hello.c
+
+baremetal-hello: examples/baremetal-hello/hello.elf
+
+# M2's own differential test: the identical ELF, loaded by our own --elf
+# (PT_LOAD/e_entry, no firmware/kernel) vs real qemu-system-riscv64's
+# ELF loader (-bios none -kernel <elf> respects e_entry regardless of
+# our own --elf flag existing - see tests/link.ld's own comment on this).
+# build-baremetal-*.out already matches /riscv-emu/build-*.out in
+# .gitignore - no new ignore entry needed.
+baremetal-compare: $(BIN) examples/baremetal-hello/hello.elf
+	@./$(BIN) --deterministic-time --elf examples/baremetal-hello/hello.elf > build-baremetal-riscv-emu.out
+	@-$(QEMU) -M virt -bios none -kernel examples/baremetal-hello/hello.elf -nographic -no-reboot > build-baremetal-qemu.out 2>/dev/null
+	@diff -u build-baremetal-riscv-emu.out build-baremetal-qemu.out && echo "riscv-emu matches QEMU (bare-metal ELF)"
+
+# M3's own differential test: the same breakpoint-on-main/continue/
+# register-read scenario driven through lldb against riscv-emu's own
+# GDB stub and against real QEMU's - see scripts/gdb-test.py's own top
+# comment. Skips cleanly (exit 0) if lldb or qemu-system-riscv64 are not
+# on PATH, rather than failing the whole suite over a missing optional
+# tool - not folded into test-all for that reason (test-all's own
+# promise is "everything here failed or didn't" with no silent skips).
+gdb-test: $(BIN) examples/baremetal-hello/hello.elf
+	python3 scripts/gdb-test.py
 
 # Phase 6's virtio-blk differential test: unlike every other test here, it
 # is C, not assembly - a virtqueue's descriptor/avail/used ring layout is
@@ -206,12 +252,14 @@ burst-test: $(BIN)
 # for a full Linux boot - the fast, "does the last change still work"
 # suite. boot-test/interactive-test/fs-compare are deliberately not part
 # of this.
-test-all: compare virtio-compare integration-compare
+test-all: compare virtio-compare integration-compare baremetal-compare
 	@echo "unit + differential + integration: all passed"
 
 clean:
-	rm -f $(BIN) tests/*.elf tests/*.bin build-*.out build-*.img tests/virtio_disk.img
+	rm -f $(BIN) tests/*.elf tests/*.bin build-*.out build-*.img tests/virtio_disk.img \
+	      examples/*/*.elf examples/*/*.bin
 
 .PHONY: all test compare trace clean firmware virtio-test virtio-compare \
         integration integration-compare boot-test interactive-test \
-        fs-compare burst-test test-all
+        fs-compare burst-test test-all baremetal-hello baremetal-compare \
+        gdb-test

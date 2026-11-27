@@ -204,6 +204,22 @@ public partial class MainWindow : Window
         if (kindDialog.ShowDialog() != true) return;
 
         var vm = _vmService.CreateDraft(kindDialog.SelectedEngineId);
+        if (kindDialog.IsBareMetal)
+        {
+            // The "Bare-metal / Embedded" template's own defaults - every
+            // other field stays whatever CreateDraft already gives
+            // riscv-emu (e.g. Platform.MemoryMB = 512). Kind is what
+            // actually switches EnvironmentEditWindow over to the bare-
+            // metal subset of fields (see GetConfigSchema's own
+            // VisibleWhen/RequiredWhen); network defaults off - a bare
+            // ELF this project ships an example of has no driver stack
+            // to ever use virtio-net anyway, and leaving it on would
+            // just be one more thing to explain was never doing anything.
+            vm.Workload.Kind = WorkloadKind.BareMetalElf;
+            vm.Platform.NetworkMode = "none";
+            vm.Debug.GdbEnabled = true;
+            vm.Debug.EnterSends = "LF";
+        }
         bool? result = new EnvironmentEditWindow(vm, _settings, _vmService) { Owner = this }.ShowDialog();
 
         if (result == true)
@@ -349,6 +365,13 @@ public partial class MainWindow : Window
         }
     }
 
+    private void GdbCopyButton_Click(object sender, RoutedEventArgs e)
+    {
+        var item = SelectedItem;
+        if (item?.GdbAttachCommand is not { } command) return;
+        System.Windows.Clipboard.SetText(command);
+    }
+
     /// <summary>Idempotent: if a console for this VM is already open,
     /// activates it instead of opening a second one. _consoleWindows alone
     /// (a plain WPF dictionary, check-then-assign on the UI thread) should
@@ -425,8 +448,15 @@ public partial class MainWindow : Window
         var busy = item != null && _vmService.IsActionInProgress(item.Config.Id);
         var selected = item != null;
 
+        // Workload.SupportsGracefulShutdown is false for a bare-metal ELF
+        // on either engine - there is no OS/shell to type
+        // Workload.ShutdownCommand into (riscv-emu) and no ACPI handler
+        // to react to a QMP power button event either (QEMU), so "Shut
+        // Down" would just silently do nothing; Force Stop is the only
+        // real way to stop one.
+        var canShutDownGracefully = item != null && item.Config.Workload.SupportsGracefulShutdown;
         StartButton.IsEnabled = CtxStartItem.IsEnabled = DetailStartButton.IsEnabled = selected && !running && !busy;
-        StopButton.IsEnabled = CtxStopItem.IsEnabled = DetailStopButton.IsEnabled = selected && running && !busy;
+        StopButton.IsEnabled = CtxStopItem.IsEnabled = DetailStopButton.IsEnabled = selected && running && !busy && canShutDownGracefully;
         ForceStopButton.IsEnabled = CtxForceStopItem.IsEnabled = DetailForceStopButton.IsEnabled = selected && running && !busy;
         ConsoleButton.IsEnabled = CtxConsoleItem.IsEnabled = DetailConsoleButton.IsEnabled = selected && running;
         EditButton.IsEnabled = CtxEditItem.IsEnabled = DetailEditButton.IsEnabled = selected && !running && !busy;

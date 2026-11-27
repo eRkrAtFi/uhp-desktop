@@ -33,6 +33,12 @@ public class RunningVm
     /// viewer yet.</summary>
     public int? VncPort { get; init; }
 
+    /// <summary>Set when this VM was started with Debug.GdbEnabled -
+    /// the actual resolved port (Debug.GdbPort's own value, or a freshly
+    /// picked free one if that was 0) a GDB client can attach to on
+    /// 127.0.0.1. See VmProcessManager.GetGdbEndpoint.</summary>
+    public int? GdbPort { get; init; }
+
     /// <summary>Previous CPU-time sample, for turning Process.TotalProcessorTime
     /// (a monotonically increasing total) into a live percent - see
     /// VmProcessManager.GetResourceUsage.</summary>
@@ -77,7 +83,8 @@ public class VmProcessManager : IEngine
         SupportsNetwork: true,
         SupportsSmp: true,
         SupportsGuestDetail: true,
-        SupportsSpeedMetric: false);
+        SupportsSpeedMetric: false,
+        SupportsBareMetalElf: true);
 
     public bool CanHandle(EnvironmentConfig env) => env.EngineId == Id;
 
@@ -101,6 +108,9 @@ public class VmProcessManager : IEngine
             ["riscv64"] = ("virt", "RISC-V has no default machine type - \"virt\" is QEMU's standard one. You'll also need OpenSBI firmware unless booting a kernel directly via Workload's own Kernel Image field."),
             ["riscv32"] = ("virt", "RISC-V has no default machine type - \"virt\" is QEMU's standard one."),
         };
+
+    private static bool IsLinuxKernel(EnvironmentConfig e) => e.Workload.Kind == WorkloadKind.LinuxKernel;
+    private static bool IsBareMetalElf(EnvironmentConfig e) => e.Workload.Kind == WorkloadKind.BareMetalElf;
 
     public IReadOnlyList<ConfigField> GetConfigSchema() => new List<ConfigField>
     {
@@ -144,15 +154,23 @@ public class VmProcessManager : IEngine
         new() { Key = "Workload.KernelPath", Label = "Kernel Image", Type = FieldType.FilePath, Group = "Workload",
             Get = e => e.Workload.KernelPath, Set = (e, v) => e.Workload.KernelPath = (string)v!,
             FileFilter = "Linux kernel image (*.bin;*.elf;vmlinuz*;*.img)|*.bin;*.elf;vmlinuz*;*.img|All files (*.*)|*.*",
-            Hint = "Boots this kernel directly via -kernel, bypassing firmware/bootloader. Leave empty to boot normally from Disk image/CD-ROM instead." },
+            Hint = "Boots this kernel directly via -kernel, bypassing firmware/bootloader. Leave empty to boot normally from Disk image/CD-ROM instead.",
+            VisibleWhen = IsLinuxKernel },
         new() { Key = "Workload.InitrdPath", Label = "Initrd / initramfs", Type = FieldType.FilePath, Group = "Workload",
             Get = e => e.Workload.InitrdPath, Set = (e, v) => e.Workload.InitrdPath = (string)v!,
-            FileFilter = "Initramfs (*.cpio.gz;*.cpio;*.img;*.gz)|*.cpio.gz;*.cpio;*.img;*.gz|All files (*.*)|*.*" },
+            FileFilter = "Initramfs (*.cpio.gz;*.cpio;*.img;*.gz)|*.cpio.gz;*.cpio;*.img;*.gz|All files (*.*)|*.*",
+            VisibleWhen = IsLinuxKernel },
         new() { Key = "Workload.KernelCmdline", Label = "Kernel command line", Type = FieldType.Text, Group = "Workload",
             Get = e => e.Workload.KernelCmdline, Set = (e, v) => e.Workload.KernelCmdline = (string)v!,
-            Hint = "Passed to the kernel via -append, e.g. \"console=ttyS0\". Only used when Kernel Image is set." },
+            Hint = "Passed to the kernel via -append, e.g. \"console=ttyS0\". Only used when Kernel Image is set.",
+            VisibleWhen = IsLinuxKernel },
         new() { Key = "Workload.ExtraArgs", Label = "Extra arguments", Type = FieldType.MultilineText, Group = "Workload",
             Get = e => e.Workload.ExtraArgs, Set = (e, v) => e.Workload.ExtraArgs = (string)v! },
+        new() { Key = "Workload.ElfPath", Label = "Bare-metal ELF", Type = FieldType.FilePath, Group = "Workload",
+            Get = e => e.Workload.ElfPath, Set = (e, v) => e.Workload.ElfPath = (string)v!,
+            FileFilter = "ELF files (*.elf)|*.elf|All files (*.*)|*.*",
+            Hint = "Runs this ELF directly, no kernel/firmware/bootloader at all (-bios none -kernel).",
+            VisibleWhen = IsBareMetalElf, RequiredWhen = IsBareMetalElf },
         new() { Key = "Debug.Display", Label = "Display backend", Type = FieldType.Choice, Group = "Debug",
             Get = e => e.Debug.Display, Set = (e, v) => e.Debug.Display = (string)v!,
             Choices = new[] { "gtk", "sdl", "console", "vnc" } },
@@ -160,6 +178,15 @@ public class VmProcessManager : IEngine
             Get = e => e.Debug.EnterSends, Set = (e, v) => e.Debug.EnterSends = (string)v!,
             Choices = new[] { "CR", "LF", "CRLF" },
             Hint = "Only matters with Display set to \"console\". Change this only if Enter in the console does not submit a line - most guests need no change." },
+        new() { Key = "Debug.GdbEnabled", Label = "GDB stub", Type = FieldType.Bool, Group = "Debug",
+            Get = e => e.Debug.GdbEnabled, Set = (e, v) => e.Debug.GdbEnabled = (bool)v!,
+            Hint = "Serve a GDB Remote Serial Protocol stub on 127.0.0.1 (loopback only) - attach with lldb/gdb's own 'gdb-remote'/'target remote'." },
+        new() { Key = "Debug.GdbPort", Label = "GDB port", Type = FieldType.Int, Group = "Debug",
+            Get = e => e.Debug.GdbPort, Set = (e, v) => e.Debug.GdbPort = (int)v!,
+            Hint = "0 picks any free port automatically - only set a specific one if something else needs to know it in advance." },
+        new() { Key = "Debug.GdbWaitForDebugger", Label = "Wait for debugger", Type = FieldType.Bool, Group = "Debug",
+            Get = e => e.Debug.GdbWaitForDebugger, Set = (e, v) => e.Debug.GdbWaitForDebugger = (bool)v!,
+            Hint = "Stop before the first instruction (like QEMU's own -S) instead of running immediately once a debugger attaches - recommended for a short program, so a breakpoint can be set before it has already finished." },
     };
 
     public VmState GetVmState(string vmId) => GetState(vmId) switch
@@ -245,7 +272,11 @@ public class VmProcessManager : IEngine
         // GetFreeTcpPort's ephemeral-range ports (comfortably above 5900 on
         // Windows) keep that subtraction positive in practice.
         var vncPort = vm.Debug.Display == "vnc" ? GetFreeTcpPort() : (int?)null;
-        var args = BuildArguments(vm, qmpPort, vncPort);
+        // Debug.GdbPort == 0 means "pick any free port", same convention
+        // as vncPort above - resolved once here, at Start time, never
+        // written back into the saved Environment.
+        var gdbPort = vm.Debug.GdbEnabled ? (vm.Debug.GdbPort != 0 ? vm.Debug.GdbPort : GetFreeTcpPort()) : (int?)null;
+        var args = BuildArguments(vm, qmpPort, vncPort, gdbPort);
 
         var psi = new ProcessStartInfo
         {
@@ -269,7 +300,7 @@ public class VmProcessManager : IEngine
             return $"Failed to start QEMU: {ex.Message}";
         }
 
-        var running = new RunningVm { Process = process, QmpPort = qmpPort, State = VmRunState.Starting, ConsoleMode = consoleMode, VncPort = vncPort };
+        var running = new RunningVm { Process = process, QmpPort = qmpPort, State = VmRunState.Starting, ConsoleMode = consoleMode, VncPort = vncPort, GdbPort = gdbPort };
         _running[vm.Id] = running;
         process.Exited += (_, _) => OnProcessExited(vm.Id);
         process.EnableRaisingEvents = true;
@@ -284,6 +315,7 @@ public class VmProcessManager : IEngine
             ProcessName = process.ProcessName,
             QmpPort = qmpPort,
             VncPort = vncPort,
+            GdbPort = gdbPort,
         });
 
         if (consoleMode)
@@ -320,6 +352,12 @@ public class VmProcessManager : IEngine
     /// in the one-shot Start message.</summary>
     public string? GetVncEndpoint(string vmId) =>
         _running.TryGetValue(vmId, out var running) && running.VncPort is { } port ? $"127.0.0.1:{port}" : null;
+
+    /// <summary>The "host:port" a running Environment's GDB stub is
+    /// listening on, or null if Debug.GdbEnabled was not set (or it is
+    /// not running at all). Same role as GetVncEndpoint above.</summary>
+    public string? GetGdbEndpoint(string vmId) =>
+        _running.TryGetValue(vmId, out var running) && running.GdbPort is { } port ? $"127.0.0.1:{port}" : null;
 
     /// <summary>Graceful shutdown: asks the guest OS to power down over QMP,
     /// the same signal a real power button sends. May be ignored by the
@@ -557,6 +595,7 @@ public class VmProcessManager : IEngine
             State = VmRunState.Running,
             ConsoleMode = false,
             VncPort = state.VncPort,
+            GdbPort = state.GdbPort,
             // A freshly-started process has accumulated ~0 CPU time, so
             // LastCpuTime's own Zero default is correct for it - but this
             // process has already been running for a while, so GetResourceUsage's
@@ -611,7 +650,7 @@ public class VmProcessManager : IEngine
         return port;
     }
 
-    private static List<string> BuildArguments(EnvironmentConfig vm, int qmpPort, int? vncPort)
+    private static List<string> BuildArguments(EnvironmentConfig vm, int qmpPort, int? vncPort, int? gdbPort)
     {
         var args = new List<string>
         {
@@ -634,7 +673,16 @@ public class VmProcessManager : IEngine
             args.Add("-M");
             args.Add(vm.Platform.MachineType);
         }
-        if (!string.IsNullOrWhiteSpace(vm.Firmware.FirmwarePath))
+        if (!string.IsNullOrWhiteSpace(vm.Workload.ElfPath))
+        {
+            // A bare-metal ELF has no firmware/bootloader at all -
+            // Firmware.FirmwarePath has no meaning for this workload and
+            // is ignored (never combined with Workload.ElfPath in the UI
+            // either, but this is the actual enforcement point).
+            args.Add("-bios");
+            args.Add("none");
+        }
+        else if (!string.IsNullOrWhiteSpace(vm.Firmware.FirmwarePath))
         {
             args.Add("-bios");
             args.Add(vm.Firmware.FirmwarePath);
@@ -684,12 +732,34 @@ public class VmProcessManager : IEngine
         // for QEMU too instead of needing them hand-typed into
         // ExtraArgs (see EnvironmentMigration's own v1-to-v2 step for
         // an Environment that already had them there).
-        if (!string.IsNullOrWhiteSpace(vm.Workload.KernelPath))
+        if (!string.IsNullOrWhiteSpace(vm.Workload.ElfPath))
+        {
+            // No -initrd/-append: a bare-metal ELF has no kernel boot
+            // protocol for either of those to be part of. QEMU's own ELF
+            // loader respects the file's own e_entry regardless of our
+            // own riscv-emu's --elf flag even existing - same loader,
+            // same entry point, on both engines.
+            args.Add("-kernel");
+            args.Add(vm.Workload.ElfPath);
+        }
+        else if (!string.IsNullOrWhiteSpace(vm.Workload.KernelPath))
         {
             args.Add("-kernel");
             args.Add(vm.Workload.KernelPath);
             if (!string.IsNullOrWhiteSpace(vm.Workload.InitrdPath)) { args.Add("-initrd"); args.Add(vm.Workload.InitrdPath); }
             if (!string.IsNullOrWhiteSpace(vm.Workload.KernelCmdline)) { args.Add("-append"); args.Add(vm.Workload.KernelCmdline); }
+        }
+
+        if (gdbPort.HasValue)
+        {
+            // tcp::<port> binds every interface by default in real QEMU;
+            // 127.0.0.1:<port> is loopback only - deliberately, same as
+            // riscv-emu's own --gdb (a debug stub that can read/write
+            // arbitrary guest memory has no business listening on
+            // anything else).
+            args.Add("-gdb");
+            args.Add($"tcp:127.0.0.1:{gdbPort}");
+            if (vm.Debug.GdbWaitForDebugger) args.Add("-S");
         }
 
         if (vm.Platform.NetworkMode == "user")

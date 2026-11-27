@@ -20,4 +20,8 @@ public record EngineCapabilities(
     /// <summary>More than one CPU core - riscv-emu is fixed at one hart.</summary>
     bool SupportsSmp,
     bool SupportsGuestDetail,
-    bool SupportsSpeedMetric);
+    bool SupportsSpeedMetric,
+    /// <summary>A bare ELF workload with no kernel/firmware (the
+    /// "Bare-metal / Embedded" template) and a GDB stub to attach a
+    /// debugger to it - roadmap item 3. True for both engines today.</summary>
+    bool SupportsBareMetalElf);

@@ -60,6 +60,8 @@ logs/
 /riscv-emu/boot/firmware.elf
 /riscv-emu/boot/*.dtb
 /riscv-emu/boot/disk.img
+/riscv-emu/examples/*/*.elf
+/riscv-emu/examples/*/*.bin
 
 # Third-party guest images (Linux kernel, initramfs, Alpine minirootfs) -
 # GPL-licensed and/or too large for git; fetched on demand instead, see

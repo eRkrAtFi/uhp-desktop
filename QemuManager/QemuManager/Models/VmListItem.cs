@@ -79,6 +79,46 @@ public class VmListItem : INotifyPropertyChanged
             Raise(nameof(IsRunning));
             Raise(nameof(StatusBrush));
             Raise(nameof(StatusText));
+            Raise(nameof(GdbEndpoint));
+            Raise(nameof(HasGdbEndpoint));
+            Raise(nameof(GdbAttachCommand));
+        }
+    }
+
+    /// <summary>"127.0.0.1:&lt;port&gt;" while running with
+    /// Debug.GdbEnabled, else null - see IVmService.GetGdbEndpoint. A
+    /// computed property, not a polled one like GuestDetail/stats below:
+    /// the resolved port lives in the engine's own in-memory running-VM
+    /// table for as long as this Environment is running, so there is
+    /// nothing to refresh beyond re-reading it whenever State changes.</summary>
+    public string? GdbEndpoint => State == VmState.Running ? _vmService.GetGdbEndpoint(Config) : null;
+
+    /// <summary>For Visibility bindings (BoolToVis) - WPF has no built-in
+    /// "non-null string" converter, and GdbEndpoint itself needs to stay
+    /// a plain nullable string for GdbAttachCommand/the TextBlock binding
+    /// below to use directly.</summary>
+    public bool HasGdbEndpoint => GdbEndpoint != null;
+
+    /// <summary>The ready-made command GdbEndpoint's own copy button
+    /// places on the clipboard - lldb's own gdb-remote, the way this
+    /// project's own riscv-emu/scripts/gdb-test.py and manual testing
+    /// both already use it. Includes the ELF itself as lldb's own
+    /// target (positional, before -o - lldb resolves source lines/local
+    /// variables against it, exactly what examples/baremetal-hello's own
+    /// -g -O0 build exists for) whenever Workload.ElfPath is set - empty
+    /// for a kernel-boot Environment with Debug.GdbEnabled, where there
+    /// is no single ELF to hand lldb as a target the same way. Uses
+    /// lldb.exe's own full path (LldbLocator) when it is not already on
+    /// PATH, so the copied command still works without the user having
+    /// added anything there themselves first.</summary>
+    public string? GdbAttachCommand
+    {
+        get
+        {
+            if (GdbEndpoint is not { } ep) return null;
+            var lldb = LldbLocator.ExePathForCommandLine();
+            var target = string.IsNullOrWhiteSpace(Config.Workload.ElfPath) ? "" : $"\"{Config.Workload.ElfPath}\" ";
+            return $"{lldb} {target}-o \"gdb-remote {ep}\"";
         }
     }
 
