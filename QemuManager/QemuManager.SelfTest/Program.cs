@@ -1351,6 +1351,25 @@ Console.WriteLine("\n--- Bare-metal ELF Environment: the example program runs on
     }
 }
 
+Console.WriteLine("\n--- LldbLocator: the detail page's own 'Copy lldb command' button needs a real, runnable path (PR #2 feedback) ---");
+{
+    var lldbPath = LldbLocator.ExePathForCommandLine();
+    Console.WriteLine($"ExePathForCommandLine returned a non-empty string: {!string.IsNullOrWhiteSpace(lldbPath)} (actual: {lldbPath})");
+    // Whichever it picked - bare "lldb" (found on PATH) or a quoted full
+    // path (LLVM's own installer default, found directly) - the file it
+    // actually points at must exist, or the copied command would just
+    // fail for the person pasting it. A bare "lldb" with nothing on
+    // PATH and no LLVM default present either is the one case this
+    // cannot verify further (there is nothing left to point at) - this
+    // machine's own CI/dev setup always has one or the other.
+    var unquoted = lldbPath.Trim('"');
+    var resolvable = unquoted == "lldb"
+        ? (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator)
+            .Any(dir => !string.IsNullOrWhiteSpace(dir) && File.Exists(Path.Combine(dir, "lldb.exe")))
+        : File.Exists(unquoted);
+    Console.WriteLine($"The path it returned actually exists (or is a bare 'lldb' already on PATH): {resolvable}");
+}
+
 Console.WriteLine("\n--- No DataGrid in the app is editable unless explicitly intended (bug: double-click on a cell crashed the app) ---");
 // A static check of the actual .xaml source, not a runtime/window check -
 // in keeping with "logic belongs in Core, tested without a window" even

@@ -13,5 +13,13 @@ SECTIONS
     .text   : { *(.text*) }
     .rodata : { *(.rodata*) }
     .data   : { *(.data*) }
+    /* The RISC-V calling convention requires sp 16-byte aligned at a
+     * call boundary - start.S's own "la sp, stack_top" is only as
+     * aligned as stack_top's own address, which nothing forced before
+     * this: .bss's own start (and so stack_top, exactly 8192 - itself a
+     * multiple of 16 - bytes past it) landed whatever odd byte .data
+     * happened to end on (confirmed directly via lldb: sp =
+     * 0x8000225f, nowhere near 16-aligned). */
+    . = ALIGN(16);
     .bss    : { *(.bss*) }
 }

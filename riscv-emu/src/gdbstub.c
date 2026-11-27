@@ -8,8 +8,13 @@
  *
  * Deliberately not a full gdbserver: exactly the commands a debugger
  * actually needs to attach, set a breakpoint, step, read/write
- * registers and memory, and detach - qSupported, qXfer:features:read
- * (target.xml for riscv:rv64), ?, g/G, p/P, m/M, c, s, Z0/z0 (software
+ * registers and memory, and detach - qSupported, qRegisterInfo (each
+ * register's real DWARF number, generic role, and offset into a 'g'
+ * packet - lldb's own source-level/"frame variable" evaluator needs
+ * this specifically, confirmed directly; qSupported deliberately does
+ * NOT advertise qXfer:features:read - see its own comment for why),
+ * qXfer:features:read (target.xml for riscv:rv64, answered correctly
+ * if asked directly regardless), ?, g/G, p/P, m/M, c, s, Z0/z0 (software
  * breakpoints, an internal table - never patching guest memory with a
  * trap instruction, so no original-byte save/restore bookkeeping is
  * needed and a breakpoint on executable ROM/flash-like memory works the
@@ -244,9 +249,9 @@ static size_t build_target_xml(char *out, size_t cap, int fpu_enabled)
         "  <architecture>riscv:rv64</architecture>\n"
         "  <feature name=\"org.gnu.gdb.riscv.cpu\">\n");
     for (i = 0; i < 32; i++)
-        len += (size_t)snprintf(out + len, cap - len, "    <reg name=\"x%d\" bitsize=\"64\"/>\n", i);
+        len += (size_t)snprintf(out + len, cap - len, "    <reg name=\"x%d\" bitsize=\"64\" regnum=\"%d\"/>\n", i, i);
     len += (size_t)snprintf(out + len, cap - len,
-        "    <reg name=\"pc\" bitsize=\"64\" type=\"code_ptr\"/>\n"
+        "    <reg name=\"pc\" bitsize=\"64\" type=\"code_ptr\" regnum=\"32\"/>\n"
         "  </feature>\n");
     if (fpu_enabled) {
         len += (size_t)snprintf(out + len, cap - len, "  <feature name=\"org.gnu.gdb.riscv.fpu\">\n");
@@ -361,7 +366,66 @@ static int gdb_dispatch(Machine *m, GdbConn *gc, BreakpointTable *bp,
     reply[0] = '\0';
 
     if (!strncmp(pkt, "qSupported", 10)) {
-        gdb_send_packet(gc, "PacketSize=4000;qXfer:features:read+");
+        /* Deliberately NOT advertising qXfer:features:read+ here, even
+         * though the handler for it (below) is fully implemented and
+         * correct: confirmed directly that when it IS advertised, lldb
+         * fetches target.xml, is satisfied by it for ordinary register
+         * access, and - this is the actual problem - NEVER ALSO asks
+         * qRegisterInfo (below) for the real per-register DWARF numbers
+         * that only that packet carries, which its own DWARF/CFI-based
+         * local-variable evaluator specifically needs ("frame variable"
+         * failed with "unable to convert register kind=1 reg_num=2 to a
+         * native register number" - kind 1 is lldb's own
+         * eRegisterKindDWARF). Not advertising it steers lldb onto
+         * qRegisterInfo instead, which this stub answers with everything
+         * target.xml would have said AND the DWARF numbers - confirmed
+         * directly: "frame variable" then reads real values. A real GDB
+         * client (unlike lldb, built around qXfer:features:read as its
+         * own primary mechanism) can still send that query directly
+         * without this advertisement - the handler below still answers
+         * it correctly either way, this only changes what lldb chooses
+         * to ask for first. */
+        gdb_send_packet(gc, "PacketSize=4000");
+    } else if (!strncmp(pkt, "qRegisterInfo", strlen("qRegisterInfo"))) {
+        /* N is this stub's own GDB-protocol register number (the same
+         * one p/P/g/G already use); the "dwarf:" field in the reply is
+         * the separate, real ELF/DWARF register number the RISC-V psABI
+         * defines (x0-31 -> 0-31, f0-31 -> 32-63 - NOT the same
+         * numbering as this stub's own 0-31/32=pc/33-64=f scheme, which
+         * reserves 32 for pc with no RISC-V DWARF equivalent to put
+         * there, so pc/fcsr are reported with no "dwarf:" field at all
+         * rather than a wrong guess). */
+        int idx = (int)strtol(pkt + strlen("qRegisterInfo"), NULL, 16);
+        int fpu;
+        int total;
+        if (*fpu_enabled_session < 0)
+            *fpu_enabled_session = ((m->cpu.mstatus >> 13) & 0x3) != 0; /* mstatus.FS != Off */
+        fpu = *fpu_enabled_session > 0;
+        total = gdb_reg_total(fpu);
+        if (idx < 0 || idx >= total) {
+            gdb_send_packet(gc, "E45");
+        } else {
+            char name[16];
+            int width, offset = 0, i;
+            char info[256];
+            int pos = 0;
+            for (i = 0; i < idx; i++) { int w; gdb_reg_read(m, i, &w); offset += w; }
+            gdb_reg_read(m, idx, &width);
+            if (idx < 32) snprintf(name, sizeof(name), "x%d", idx);
+            else if (idx == 32) snprintf(name, sizeof(name), "pc");
+            else if (idx <= 64) snprintf(name, sizeof(name), "f%d", idx - 33);
+            else snprintf(name, sizeof(name), "fcsr");
+            pos += snprintf(info + pos, sizeof(info) - pos,
+                "name:%s;bitsize:%d;offset:%d;encoding:uint;format:hex;set:General Purpose Registers;",
+                name, width * 8, offset);
+            if (idx < 32) pos += snprintf(info + pos, sizeof(info) - pos, "dwarf:%d;", idx);
+            else if (idx >= 33 && idx <= 64) pos += snprintf(info + pos, sizeof(info) - pos, "dwarf:%d;", 32 + (idx - 33));
+            if (idx == 32) pos += snprintf(info + pos, sizeof(info) - pos, "generic:pc;");
+            else if (idx == 1) pos += snprintf(info + pos, sizeof(info) - pos, "generic:ra;");
+            else if (idx == 2) pos += snprintf(info + pos, sizeof(info) - pos, "generic:sp;");
+            else if (idx == 8) pos += snprintf(info + pos, sizeof(info) - pos, "generic:fp;");
+            gdb_send_packet(gc, info);
+        }
     } else if (!strncmp(pkt, "qXfer:features:read:target.xml:", strlen("qXfer:features:read:target.xml:"))) {
         static char xml[16384];
         const char *args = pkt + strlen("qXfer:features:read:target.xml:");

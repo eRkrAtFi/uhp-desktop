@@ -48,13 +48,19 @@ STARTUP_WAIT_SECONDS = 1.5
 
 def run_lldb(port, reg_names):
     """target create + gdb-remote + breakpoint on main + continue +
-    register read + delete the breakpoint + continue to completion, all
-    in one lldb batch (-o ...) invocation - the exact scenario this
-    milestone's own verification step describes. Returns (returncode,
-    combined stdout+stderr transcript) - the caller decides whether an
-    empty/unexpected transcript means lldb itself is not usable in this
-    environment (see is_lldb_output_sane) rather than a real
-    comparison failure."""
+    register read + three SOURCE-level steps (hello.c's own for loop,
+    reached after exactly three - see hello.c's own line numbers) +
+    read the loop's own local variable + delete the breakpoint +
+    continue to completion, all in one lldb batch (-o ...) invocation -
+    the exact scenario this milestone's own verification step
+    describes. Source-level stepping and reading a real local variable
+    (not just raw registers) only works because examples/baremetal-hello
+    is built with -g -O0 (see Makefile's own BAREMETAL_FLAGS) - the
+    compiler has to emit line/variable debug info for lldb to show any
+    of this. Returns (returncode, combined stdout+stderr transcript) -
+    the caller decides whether an empty/unexpected transcript means lldb
+    itself is not usable in this environment (see is_lldb_output_sane)
+    rather than a real comparison failure."""
     elf_posix = ELF.replace("\\", "/")
     cmds = [
         'target create "%s"' % elf_posix,
@@ -62,6 +68,10 @@ def run_lldb(port, reg_names):
         "breakpoint set --name main",
         "continue",
         "register read %s" % " ".join(reg_names),
+        "next",
+        "next",
+        "next",
+        "frame variable i",
         "breakpoint delete 1",
         "continue",
     ]
@@ -94,6 +104,19 @@ def extract_values(lldb_output, reg_names):
             sys.exit(1)
         values[name] = int(m.group(1), 16)
     return values
+
+
+def extract_variable(lldb_output, name):
+    """Pulls an integer value out of lldb's own "frame variable <name>"
+    reply, e.g. "(uint32_t) i = 0" -> 0. Exits with the full transcript
+    printed if the variable could not be read at all (source-level
+    debug info missing or broken - a real failure, not a value
+    mismatch)."""
+    m = re.search(r"\)\s*%s\s*=\s*(-?\d+)" % re.escape(name), lldb_output)
+    if not m:
+        print("gdb-test: could not read local variable '%s' from lldb's own output (source-level debug info broken?):\n%s" % (name, lldb_output))
+        sys.exit(1)
+    return int(m.group(1))
 
 
 def main():
@@ -178,10 +201,35 @@ def main():
         if rv != qv:
             ok = False
 
+    # The actual regression this milestone's own stack-alignment fix
+    # (link.ld's own ALIGN(16) before .bss) guards against: sp must be
+    # 16-byte aligned per the RISC-V calling convention at any call
+    # boundary - confirmed BROKEN before that fix (sp = 0x8000225f, not
+    # even close), on both sides identically (same ELF, same linker
+    # output - QEMU is not a second opinion here, just confirming this
+    # script reads the right register).
+    for label, sp in (("riscv-emu", riscv_vals["x2"]), ("qemu", qemu_vals["sp"])):
+        aligned = (sp & 0xf) == 0
+        print("gdb-test: %-9s sp=0x%016x 16-byte aligned: %s" % (label, sp, aligned))
+        if not aligned:
+            ok = False
+
+    # Source-level stepping + a real local variable (hello.c's own loop
+    # counter `i`, read via "frame variable" after three source-level
+    # "next" steps from the breakpoint on main - see run_lldb's own
+    # remarks) - needs -g -O0 debug info to work at all, not just
+    # matching values.
+    riscv_i = extract_variable(riscv_out, "i")
+    qemu_i = extract_variable(qemu_out, "i")
+    i_status = "OK" if riscv_i == qemu_i else "MISMATCH"
+    print("gdb-test: i    riscv-emu=%d qemu=%d %s" % (riscv_i, qemu_i, i_status))
+    if riscv_i != qemu_i:
+        ok = False
+
     if not ok:
-        print("gdb-test: FAIL - register state at the breakpoint stop on main differs between riscv-emu and QEMU")
+        print("gdb-test: FAIL - register/variable/alignment state differs between riscv-emu and QEMU, or sp is misaligned")
         return 1
-    print("gdb-test: riscv-emu matches QEMU (registers at the breakpoint stop on main)")
+    print("gdb-test: riscv-emu matches QEMU (registers, a source-level local variable, and sp alignment, all at the breakpoint stop on main)")
     return 0
 
 

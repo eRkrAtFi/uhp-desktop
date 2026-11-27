@@ -76,8 +76,14 @@ firmware: boot/firmware.bin
 # real gp-initializing crt0, which this freestanding environment has
 # none of (confirmed the identical way: R_RISCV_HI20 out of range
 # without it).
+# -g -O0: this example exists to be debugged (vision/VISION.md roadmap
+# item 3's own GDB stub work) - without them lldb has no source lines or
+# local variables to show at all, only raw disassembly. -O0 (not -Og)
+# keeps the control flow exactly as written, line for line, with no
+# optimizer reordering a step/next command could ever look confusing
+# next to.
 BAREMETAL_FLAGS := --target=riscv64-unknown-elf -march=rv64im -mabi=lp64 -mcmodel=medany -mno-relax \
-                    -nostdlib -static -Wl,-T,examples/baremetal-hello/link.ld
+                    -g -O0 -nostdlib -static -Wl,-T,examples/baremetal-hello/link.ld
 
 examples/baremetal-hello/hello.elf: examples/baremetal-hello/start.S examples/baremetal-hello/hello.c examples/baremetal-hello/link.ld
 	$(CLANG) $(BAREMETAL_FLAGS) -fuse-ld=lld -o $@ examples/baremetal-hello/start.S examples/baremetal-hello/hello.c

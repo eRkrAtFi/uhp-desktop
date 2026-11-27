@@ -102,8 +102,25 @@ public class VmListItem : INotifyPropertyChanged
     /// <summary>The ready-made command GdbEndpoint's own copy button
     /// places on the clipboard - lldb's own gdb-remote, the way this
     /// project's own riscv-emu/scripts/gdb-test.py and manual testing
-    /// both already use it.</summary>
-    public string? GdbAttachCommand => GdbEndpoint is { } ep ? $"lldb -o \"gdb-remote {ep}\"" : null;
+    /// both already use it. Includes the ELF itself as lldb's own
+    /// target (positional, before -o - lldb resolves source lines/local
+    /// variables against it, exactly what examples/baremetal-hello's own
+    /// -g -O0 build exists for) whenever Workload.ElfPath is set - empty
+    /// for a kernel-boot Environment with Debug.GdbEnabled, where there
+    /// is no single ELF to hand lldb as a target the same way. Uses
+    /// lldb.exe's own full path (LldbLocator) when it is not already on
+    /// PATH, so the copied command still works without the user having
+    /// added anything there themselves first.</summary>
+    public string? GdbAttachCommand
+    {
+        get
+        {
+            if (GdbEndpoint is not { } ep) return null;
+            var lldb = LldbLocator.ExePathForCommandLine();
+            var target = string.IsNullOrWhiteSpace(Config.Workload.ElfPath) ? "" : $"\"{Config.Workload.ElfPath}\" ";
+            return $"{lldb} {target}-o \"gdb-remote {ep}\"";
+        }
+    }
 
     private string? _guestDetail;
     /// <summary>Extra live detail QEMU alone can report over QMP (e.g.
