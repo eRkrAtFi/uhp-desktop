@@ -1590,6 +1590,58 @@ Console.WriteLine("\n--- Phase 6: Storage page data gathering (IVmService.GetDis
     if (File.Exists(referencedDiskPath)) File.Delete(referencedDiskPath);
 }
 
+Console.WriteLine("\n--- PR #7 feedback: creating a raw disk needs no QEMU at all (DiskImageService.CreateRaw/CreateAsync) ---");
+{
+    var rawPath = Path.Combine(AppPaths.DisksDir, "selftest-raw.img");
+    if (File.Exists(rawPath)) File.Delete(rawPath);
+    var rawSizeBytes = 5L * 1024 * 1024; // 5 MB - small on purpose, see the "auto unit" check below
+    var rawMsg = DiskImageService.CreateRaw(rawPath, rawSizeBytes);
+    Console.WriteLine($"CreateRaw: {rawMsg}");
+    Console.WriteLine($"File exists: {File.Exists(rawPath)} (expected: True)");
+    Console.WriteLine($"File size matches exactly (FileInfo.Length, no qemu-img involved): {new FileInfo(rawPath).Length == rawSizeBytes} (expected: True, actual: {new FileInfo(rawPath).Length})");
+
+    // Same thing through the single entry point CreateDiskWindow itself
+    // now calls (CreateAsync), with format="raw" explicitly, against a
+    // deliberately bogus qemuDir - proving raw creation truly does not
+    // need QEMU to be found at all.
+    var rawPath2 = Path.Combine(AppPaths.DisksDir, "selftest-raw2.img");
+    if (File.Exists(rawPath2)) File.Delete(rawPath2);
+    var rawMsg2 = await DiskImageService.CreateAsync(@"C:\this-qemu-dir-does-not-exist", rawPath2, 1024 * 1024, "raw");
+    Console.WriteLine($"CreateAsync(format=\"raw\") with a nonexistent qemuDir still succeeds: {rawMsg2.StartsWith("Created")} (actual: {rawMsg2})");
+
+    File.Delete(rawPath);
+    File.Delete(rawPath2);
+}
+
+Console.WriteLine("\n--- PR #7 feedback: riscv-emu's own Workload.DiskPath rejects a qcow2 image (DiskImageService.LooksLikeQcow2 / RiscvEmuProcessManager's schema) ---");
+{
+    Console.WriteLine($"LooksLikeQcow2(\"disk.qcow2\"): {DiskImageService.LooksLikeQcow2("disk.qcow2")} (expected: True)");
+    Console.WriteLine($"LooksLikeQcow2(\"disk.img\"): {DiskImageService.LooksLikeQcow2("disk.img")} (expected: False)");
+    Console.WriteLine($"LooksLikeQcow2(\"disk.raw\"): {DiskImageService.LooksLikeQcow2("disk.raw")} (expected: False)");
+
+    IVmService validationService = new VmService();
+    var riscvField = validationService.GetConfigSchema("RiscvEmu").First(f => f.Key == "Workload.DiskPath");
+    Console.WriteLine($"riscv-emu Workload.DiskPath rejects a .qcow2 path: {riscvField.Validate?.Invoke("C:\\disks\\foo.qcow2") != null} (expected: True)");
+    Console.WriteLine($"riscv-emu Workload.DiskPath accepts a .img path: {riscvField.Validate?.Invoke("C:\\disks\\foo.img") == null} (expected: True)");
+    Console.WriteLine($"riscv-emu Workload.DiskPath accepts an empty path (no disk attached): {riscvField.Validate?.Invoke("") == null} (expected: True)");
+
+    // The same schema object is handed back for an Environment that was
+    // already saved and just loaded again, not only for a freshly
+    // drafted one - EnvironmentEditWindow's own Validate pass (OkButton_
+    // Click) runs identically either way, so an *existing* riscv-emu
+    // Environment somehow pointed at a qcow2 file (hand-edited JSON, or
+    // created before this check existed) is caught the next time it is
+    // opened and saved in the editor, the same as a brand-new one would
+    // be.
+    var qemuField = validationService.GetConfigSchema("Qemu").First(f => f.Key == "Workload.DiskPath");
+    Console.WriteLine($"QEMU's own Workload.DiskPath has no such restriction (qcow2 is its normal format): {qemuField.Validate?.Invoke("C:\\disks\\foo.qcow2") == null} (expected: True)");
+
+    var existingRiscvEnv = new EnvironmentConfig { EngineId = "RiscvEmu", Name = "selftest-existing-riscv", Workload = new Workload { DiskPath = "C:\\disks\\pre-existing.qcow2" } };
+    var existingJson = System.Text.Json.JsonSerializer.Serialize(existingRiscvEnv);
+    var reloadedRiscvEnv = System.Text.Json.JsonSerializer.Deserialize<EnvironmentConfig>(existingJson)!;
+    Console.WriteLine($"An already-saved-and-reloaded riscv-emu Environment with a qcow2 DiskPath still fails the same Validate: {riscvField.Validate?.Invoke(reloadedRiscvEnv.Workload.DiskPath) != null} (expected: True)");
+}
+
 Console.WriteLine("\n--- Phase 6: Networking page data gathering (IVmService.GetNetworkInventory) ---");
 {
     IVmService networkService = new VmService();

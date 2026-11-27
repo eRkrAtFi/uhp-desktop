@@ -30,6 +30,16 @@ public class DiskListItem
     /// Environment still references it.</summary>
     public bool CanRemove => Info.UsedByEnvironmentNames.Count == 0;
 
-    private static string FormatBytes(long? bytes) =>
-        bytes.HasValue ? $"{bytes.Value / (1024.0 * 1024 * 1024):0.##} GB" : "unknown";
+    /// <summary>Auto-picks KB/MB/GB so a small disk (a raw image a few
+    /// MB in size, say) does not round down to a misleading "0 GB" -
+    /// PR #7 feedback.</summary>
+    private static string FormatBytes(long? bytes)
+    {
+        if (!bytes.HasValue) return "unknown";
+        var b = bytes.Value;
+        if (b >= 1024.0 * 1024 * 1024) return $"{b / (1024.0 * 1024 * 1024):0.##} GB";
+        if (b >= 1024.0 * 1024) return $"{b / (1024.0 * 1024):0.##} MB";
+        if (b >= 1024.0) return $"{b / 1024.0:0.##} KB";
+        return $"{b} bytes";
+    }
 }
