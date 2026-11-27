@@ -6,38 +6,126 @@ on:
   pull_request:
     branches: [main]
 
+# A new push to the same branch/PR supersedes whatever this workflow was
+# already running for it - cancel that run instead of letting two (or
+# more, from a rapid sequence of pushes) burn runner minutes on commits
+# nobody cares about the result of any more.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  build-and-test:
+  # Decides whether this change could possibly need riscv-emu/QemuManager
+  # actually built and tested at all - a docs/vision/image-only change
+  # cannot have broken either, so emulator/app below skip their own real
+  # work entirely for one (see their own `if:`) rather than spending
+  # ~10 minutes proving that again. Always runs itself (cheap: a git
+  # diff, nothing to build) and is always required to have genuinely
+  # succeeded - see ci-ok's own check - so a bug in this job's own logic
+  # can never silently skip real verification.
+  #
+  # Only applied to pull_request runs: a push to main (i.e. a squash-
+  # merge having just landed) always gets the full suite, regardless of
+  # what it touched - that is the one record of "main actually works"
+  # everything else (including this same fast-path) trusts.
+  changes:
+    runs-on: windows-latest
+    outputs:
+      docs_only: ${{ steps.filter.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine whether only docs/vision/images changed
+        id: filter
+        shell: bash
+        run: |
+          set -e
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            changed=$(git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}")
+          else
+            changed=""
+          fi
+          echo "Changed files (empty means: not a pull_request run, or truly nothing differs):"
+          echo "$changed"
+
+          docs_only=true
+          if [ -z "$changed" ]; then
+            docs_only=false
+          fi
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            case "$f" in
+              docs/*|*.md|vision/*|*.png|*.jpg|*.jpeg|*.gif) ;;
+              *) docs_only=false ;;
+            esac
+          done <<< "$changed"
+
+          echo "docs_only=$docs_only"
+          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+
+  # riscv-emu itself: build, the fast suite (unit + differential +
+  # integration), the GDB stub differential test, and everything that
+  # needs a real kernel+initramfs (boot/interactive/fs/burst). Runs in
+  # parallel with app below - the two never depend on each other's own
+  # results, only on `changes`.
+  emulator:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
-      # gcc (for riscv-emu.exe itself) and clang+llvm-objcopy (for the
-      # RISC-V guest test programs its own test suite compiles) - see
-      # THIRD_PARTY.md for why neither is ever bundled/shipped, only used
-      # here to build and test. qemu is the real qemu-system-riscv64
-      # `make compare`'s differential tests check riscv-emu's own output
-      # against. windows-latest's chocolatey is already installed; these
-      # three are not preinstalled on the image.
+      # gcc (for riscv-emu.exe itself) and clang+llvm-objcopy+lldb (for
+      # the RISC-V guest test programs its own test suite compiles, and
+      # for make gdb-test) - see THIRD_PARTY.md for why neither is ever
+      # bundled/shipped, only used here to build and test. qemu is the
+      # real qemu-system-riscv64 `make compare`'s differential tests
+      # (and make gdb-test's own QEMU leg) check riscv-emu's own output
+      # against.
+      #
+      # Cached, keyed on a fixed version tag rather than anything that
+      # changes with this repo's own commits (there is nothing in this
+      # repo these packages' own versions are pinned against) - bump the
+      # "v1" suffix by hand if a newer mingw/llvm/qemu is ever actually
+      # needed; until then this is the single largest chunk of time a
+      # cache hit removes from this job, choco's own installers downloading
+      # and unpacking three real toolchains from scratch on every run.
+      - name: Cache build tools (gcc, LLVM, QEMU)
+        id: tool-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:\Program Files\qemu
+            C:\Program Files\LLVM
+            C:\ProgramData\chocolatey\lib\mingw
+          key: choco-tools-windows-v1
+
       - name: Install build tools (gcc, LLVM, QEMU)
-        run: |
-          choco install mingw llvm qemu -y --no-progress
+        if: steps.tool-cache.outputs.cache-hit != 'true'
+        run: choco install mingw llvm qemu -y --no-progress
         shell: pwsh
 
-      # Chocolatey's mingw package registers its own PATH entry (visible
-      # in the install log as "PATH environment variable does not have
-      # ... Adding..."), but its qemu package does not - confirmed the
-      # hard way: this workflow's own first real run built riscv-emu.exe
-      # fine (gcc was found) but `make compare` failed with "Error 127"
-      # (qemu-system-riscv64: command not found), producing an empty
-      # build-qemu.out that then "differed" from every line of riscv-emu's
-      # own real output - not an actual emulator regression, just QEMU
-      # never being on PATH to begin with. $GITHUB_PATH, not $env:PATH -
-      # a plain in-process PATH edit would not survive into the next step
-      # anyway, since each `run:` spawns a fresh shell.
-      - name: Add QEMU to PATH
-        run: echo "C:\Program Files\qemu" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+      # Both of these are added explicitly and unconditionally - not
+      # left to whatever PATH side effect choco's own installers happen
+      # to produce - precisely so a cache HIT (no choco install step
+      # ever ran this time) still ends up with a working PATH. mingw's
+      # own gcc.exe is looked up rather than hardcoded: it lives several
+      # version-specific directories deep under chocolatey's own package
+      # layout, which is not this workflow's own concern to hardcode.
+      - name: Add build tools to PATH
         shell: pwsh
+        run: |
+          "C:\Program Files\qemu" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          "C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          $gcc = Get-ChildItem "C:\ProgramData\chocolatey\lib\mingw" -Recurse -Filter "gcc.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($gcc) {
+            $gcc.DirectoryName | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          } else {
+            Write-Error "gcc.exe not found under C:\ProgramData\chocolatey\lib\mingw"
+            exit 1
+          }
 
       - name: Build riscv-emu
         working-directory: riscv-emu
@@ -59,10 +147,12 @@ jobs:
         run: make test-all
         shell: bash
 
-      # scripts/gdb-test.py itself skips (exit 0, not a failure) if
-      # lldb or qemu-system-riscv64 are not on PATH - choco's llvm
-      # package does bundle lldb.exe, but this does not depend on that
-      # staying true.
+      # scripts/gdb-test.py itself skips (exit 0, not a failure) if lldb
+      # is not usable in this environment (not found, or found but
+      # produces no real session output - confirmed to happen on this
+      # exact runner image; see vision/NEXT.md's own "Known issue" entry
+      # and scripts/gdb-test.py's is_lldb_output_sane) or
+      # qemu-system-riscv64 is not on PATH.
       - name: riscv-emu GDB stub differential test (vs real QEMU, via lldb)
         working-directory: riscv-emu
         run: make gdb-test
@@ -73,19 +163,20 @@ jobs:
       # Buildroot build (see riscv-emu/buildroot/ and
       # .github/workflows/guest-images.yml), published as a release asset
       # since this repo deliberately does not commit it to git (see
-      # THIRD_PARTY.md). scripts/fetch-guest-images.sh tries a plain,
-      # unauthenticated download of that asset first, falling back to
-      # `gh release download` only if that fails for some other reason -
-      # GH_TOKEN is set here so that fallback path works reliably in CI
-      # too, not because it is otherwise required. A real fetch failure
-      # now fails this step (and the job) loudly rather than being
-      # silently tolerated - the kernel is no longer "not available yet"
-      # as a matter of course, so a failure here means something is
-      # actually wrong (asset renamed/deleted, both download paths
-      # genuinely unreachable, ...) and deserves attention. The next
-      # step's own if/else check is for other invocation paths (a
-      # developer running these Makefile targets locally without having
-      # run this fetch step first), not for tolerating a failure here.
+      # THIRD_PARTY.md). Cached by this script's own pinned sha256
+      # (baked into the cache key via hashing the script itself, so a
+      # version bump there invalidates this automatically) - a cache hit
+      # skips the actual network download entirely, scripts/
+      # fetch-guest-images.sh's own "already present and verified" check
+      # already does the rest (no change needed there for this to work).
+      - name: Cache guest images (Alpine minirootfs, Buildroot kernel+initramfs)
+        uses: actions/cache@v4
+        with:
+          path: |
+            riscv-emu/tests/alpine-minirootfs.tar.gz
+            riscv-emu/boot/guest-images.tar.gz
+          key: guest-images-${{ hashFiles('riscv-emu/scripts/fetch-guest-images.sh') }}
+
       - name: Fetch guest images
         working-directory: riscv-emu
         run: bash scripts/fetch-guest-images.sh
@@ -119,9 +210,85 @@ jobs:
           path: riscv-emu/boot/fs_compare_last_run/
           if-no-files-found: ignore
 
+  # UHP.Core + the WPF app + the full SelfTest suite. Needs riscv-emu and
+  # QEMU too (QemuManager.SelfTest starts real riscv-emu.exe/qemu-system-*
+  # processes directly for most of its own scenarios, including the
+  # bare-metal-ELF-on-both-engines one) and so repeats the same
+  # install/cache/build-riscv-emu steps as emulator above (a few seconds
+  # of redundant work, not worth a cross-job artifact hand-off to avoid -
+  # the real time this job spends is in dotnet build + SelfTest itself,
+  # which runs on its own runner, in parallel with emulator's own much
+  # longer kernel-boot-shaped tests).
+  app:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache build tools (gcc, LLVM, QEMU)
+        id: tool-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:\Program Files\qemu
+            C:\Program Files\LLVM
+            C:\ProgramData\chocolatey\lib\mingw
+          key: choco-tools-windows-v1
+
+      - name: Install build tools (gcc, LLVM, QEMU)
+        if: steps.tool-cache.outputs.cache-hit != 'true'
+        run: choco install mingw llvm qemu -y --no-progress
+        shell: pwsh
+
+      - name: Add build tools to PATH
+        shell: pwsh
+        run: |
+          "C:\Program Files\qemu" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          "C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          $gcc = Get-ChildItem "C:\ProgramData\chocolatey\lib\mingw" -Recurse -Filter "gcc.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($gcc) {
+            $gcc.DirectoryName | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          } else {
+            Write-Error "gcc.exe not found under C:\ProgramData\chocolatey\lib\mingw"
+            exit 1
+          }
+
+      - name: Build riscv-emu
+        working-directory: riscv-emu
+        run: make
+        shell: bash
+
+      # examples/baremetal-hello/hello.elf: QemuManager.SelfTest's own
+      # bare-metal-ELF-on-both-engines scenario needs it built already -
+      # it does not build it itself (unlike riscv-emu.exe above, which
+      # every scenario needs, this one guest program is specific to that
+      # one test).
+      - name: Build examples/baremetal-hello
+        working-directory: riscv-emu
+        run: make baremetal-hello
+        shell: bash
+
+      - name: Cache guest images (Alpine minirootfs, Buildroot kernel+initramfs)
+        uses: actions/cache@v4
+        with:
+          path: |
+            riscv-emu/tests/alpine-minirootfs.tar.gz
+            riscv-emu/boot/guest-images.tar.gz
+          key: guest-images-${{ hashFiles('riscv-emu/scripts/fetch-guest-images.sh') }}
+
+      - name: Fetch guest images
+        working-directory: riscv-emu
+        run: bash scripts/fetch-guest-images.sh
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "8.0.x"
+          cache: true
+          cache-dependency-path: QemuManager/**/*.csproj
 
       - name: Build UHP.Core + QemuManager.SelfTest
         working-directory: QemuManager
@@ -138,3 +305,43 @@ jobs:
         working-directory: QemuManager
         run: dotnet QemuManager.SelfTest/bin/Release/net8.0/QemuManager.SelfTest.dll "C:\Program Files\qemu" "..\riscv-emu"
         shell: pwsh
+
+  # The one actual required status check (see repo Settings -> Branches)
+  # - "emulator"/"app" themselves are not, since a docs-only change skips
+  # them entirely (a skipped required check blocks merging forever,
+  # which is exactly what docs_only is for avoiding). Always runs
+  # (`if: always()`), and is the only job allowed to treat "skipped" as
+  # acceptable - precisely because it is the one place that distinction
+  # is actually checked, rather than silently trusted everywhere a real
+  # job might depend on one of these two.
+  ci-ok:
+    needs: [changes, emulator, app]
+    if: always()
+    runs-on: windows-latest
+    steps:
+      - name: Check that every required job succeeded or was cleanly skipped
+        shell: bash
+        run: |
+          changes="${{ needs.changes.result }}"
+          emulator="${{ needs.emulator.result }}"
+          app="${{ needs.app.result }}"
+          echo "changes:  $changes"
+          echo "emulator: $emulator"
+          echo "app:      $app"
+
+          ok=true
+          if [ "$changes" != "success" ]; then
+            echo "::error::changes job itself must succeed (not skip, not fail) - got: $changes"
+            ok=false
+          fi
+          for result in "$emulator" "$app"; do
+            case "$result" in
+              success|skipped) ;;
+              *) ok=false ;;
+            esac
+          done
+          if [ "$ok" != "true" ]; then
+            echo "::error::emulator/app must each be success or skipped - emulator=$emulator app=$app"
+            exit 1
+          fi
+          echo "All required jobs succeeded, or were cleanly skipped as a docs-only change."
