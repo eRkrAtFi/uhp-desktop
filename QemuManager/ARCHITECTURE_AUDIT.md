@@ -1,5 +1,53 @@
 # Hypervisor Architecture Audit – Phase 1
 
+> **Historical snapshot, 2026-11-13** - before this repo even had git, let
+> alone the `IEngine`/`EnvironmentConfig` refactor, the `v*` release line,
+> or the Host/Storage/Networking/Engines pages. Kept as-is (not rewritten)
+> because it is itself a point-in-time read of the code, same as this
+> project's own phase-by-phase README logs - editing it after the fact
+> would misrepresent what it actually found on that date. Status against
+> each finding below, confirmed against the code as of v0.6.0:
+>
+> - §1/§9/Critical Risk #2 (**no git**): fixed - this has been a real git
+>   repo with PR-based review (see the root `CLAUDE.md`) since shortly
+>   after this audit.
+> - §4/Critical Risk #1 (**a VM that is still running shows as "Stopped"
+>   after a restart**): fixed - `RuntimeStateStore`/`TryReattach`, see
+>   `QemuManager/README.md`'s own "Surviving an app restart" section.
+> - §4 (**host capabilities not modeled - no WHPX check**): fixed - the
+>   Engines page's own `WhpxStatus` (`WHvGetCapability`, the same check
+>   QEMU's `-accel whpx` itself makes).
+> - §5/Critical Risk #3 (**no guided machine-type/firmware for non-x86**):
+>   fixed - `Platform.MachineType`/`Firmware.FirmwarePath`, with
+>   `ConfigField.DependsOn` suggesting/requiring a value per architecture;
+>   see `QemuManager/README.md`'s "Guided machine type / firmware" section.
+> - §6 (**storage: qcow2-only creation, format guessed from extension,
+>   no multi-disk/pool concept**): partially addressed, not a pool - the
+>   Storage page can create either qcow2 or raw and tracks every disk in
+>   a small registry; format for riscv-emu's own validation is now read
+>   from the file's real content, not its extension (`DiskImageService.
+>   LooksLikeQcow2`). No storage-pool/multi-host concept exists, same as
+>   this audit found.
+> - §6 (**networking: binary NAT/none choice, no port forwarding/bridge**):
+>   still true - the Networking page (new) is a read-only overview of the
+>   same choice, nothing more.
+> - §8 (**no QMP timeout**): fixed - see `QemuManager/README.md`'s "QMP
+>   timeouts" section.
+> - §9 (**`QemuManager.SelfTest` only covers the QEMU engine**): fixed -
+>   it has covered both engines, plus everything from the pages this
+>   audit predates, since.
+> - §9 (**dead ternary, duplicated resource-sampling logic**): fixed -
+>   see `QemuManager/README.md`'s "Closing the audit's remaining
+>   low-priority items" section.
+> - §3/§7 (**QMP has no auth; no multi-node/web-API layer exists**):
+>   still true, and still not attempted - no network-facing surface
+>   exists yet (see the root [`README.md`](../README.md)'s own Status
+>   and [`vision/VISION.md`](../vision/VISION.md)'s roadmap for what is
+>   and is not planned toward that).
+>
+> See the root [`README.md`](../README.md)'s own Status section for
+> what is current right now - this document is not it.
+
 Read-only audit. No files were modified, moved, renamed or deleted to produce
 this document, and no dependencies were installed. Every finding below is
 grounded in code actually read in this checkout on 2026-11-13, not assumed.

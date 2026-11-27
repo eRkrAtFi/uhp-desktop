@@ -23,23 +23,50 @@ scratch in C and verified at every step against real QEMU.
 
 ## Status
 
-**Works:** creating/running/stopping both real QEMU Environments and
-riscv-emu Environments; a real terminal console (xterm.js - colors,
+**Works (as of v0.6.0):** creating/running/stopping both real QEMU
+Environments and riscv-emu Environments, including a bare-metal ELF
+workload with a GDB stub attachable via lldb/gdb (roadmap item 3 - see
+[Vision](#vision) below); a real terminal console (xterm.js - colors,
 cursor movement, Ctrl+C, copy/paste) with a graceful Shut Down that
-waits for the guest to exit on its own; live CPU/memory stats; Recent
-Tasks; a portable, no-installer release build.
+waits for the guest to exit on its own; live CPU/memory stats; a
+portable, no-installer release build. Every page in the sidebar is
+real, not a placeholder:
+- **Engines** - each engine's own install path, `--version`, status
+  (found/not found/error), supported architectures, and how many
+  Environments use it; paths are changed here (Browse re-validates
+  immediately), not in Settings any more.
+- **Storage** - every disk any Environment uses, plus a small registry
+  of disks created or added by hand that survives its own Environment
+  being deleted; create (raw or qcow2, MB/GB, never silently
+  overwrites an existing file), add an existing one, remove from the
+  list (un-registers only - never deletes the file itself).
+- **Host** - this machine's OS/CPU/RAM/free disk space and WHPX
+  availability, plus how many Environments are running and their
+  summed CPU/memory.
+- **Recent Tasks**, Storage, Networking, and Environments: every grid
+  column is resizable (remembered between runs), has a tooltip with
+  the full value, and a double-click opens a detail view with copy.
 
 **Does not work yet:**
-- The **Storage** and **Networking** sections in the sidebar are
-  placeholders with no functionality behind them yet (per-Environment
-  disk/network settings, in the Environment's own Edit window, already
-  work - these are for anything beyond that, e.g. a storage-pool or
-  bridged-network view).
+- **Networking** is a read-only overview (engine, mode, guest/gateway
+  address per Environment) - no port forwarding, no bridged or custom
+  network topologies yet; per-Environment disk/network settings
+  themselves (in the Environment's own Edit window) already work.
+- `make gdb-test` (riscv-emu's own GDB stub, differentially verified
+  against real QEMU through lldb) is skipped in CI - the choco-
+  installed lldb crashes on GitHub's own Windows runner; it runs and
+  passes locally. See [`vision/NEXT.md`](vision/NEXT.md).
+- UEFI/firmware development on x86_64, VM snapshots, and a third
+  engine (roadmap items 4 and 5) have not been started.
+- Windows only; a web UI and a CLI are later ideas in the roadmap, not
+  yet started.
 
-See [`QemuManager/ARCHITECTURE_AUDIT.md`](QemuManager/ARCHITECTURE_AUDIT.md)
-for the full, honest list of known gaps and risks (storage/networking
-depth, security posture, multi-node readiness) and what's actually
-planned next.
+See [`vision/VISION.md`](vision/VISION.md) for the full roadmap this
+status tracks against, and
+[`QemuManager/ARCHITECTURE_AUDIT.md`](QemuManager/ARCHITECTURE_AUDIT.md)
+for a point-in-time (2026-11-13, pre-`IEngine`) architecture audit -
+most of its findings are already fixed; see its own note at the top
+for which, and where the current equivalent is documented.
 
 ## Vision
 

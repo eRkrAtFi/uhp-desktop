@@ -8,15 +8,20 @@ door - that project studies QEMU's internals by reimplementing a slice of them;
 this one treats QEMU as a finished engine and builds a front end for it, the
 way virt-manager or the GNOME Boxes do on Linux.
 
-Each VM has a `Kind`: "Qemu" (above) or "RiscvEmu" - a frontend for this
-repo's *own* hand-written emulator, `riscv-emu/`, so it can be run the normal
-way (double-click an icon, Start/Stop, a console window) instead of only from
-a terminal with a long flag list. See "riscv-emu VMs" below for how that
-differs from the QEMU path.
+Each Environment has an `EngineId`: "Qemu" (above) or "RiscvEmu" - a
+frontend for this repo's *own* hand-written emulator, `riscv-emu/`, so it
+can be run the normal way (double-click an icon, Start/Stop, a console
+window) instead of only from a terminal with a long flag list. See
+"riscv-emu VMs" below for how that differs from the QEMU path. (This used
+to be a plain string field called `Kind` on a flat `VmConfig` - the
+current shape, `EnvironmentConfig.EngineId` plus `IEngine`, is what the
+"Project layout" section below describes; VM/Environment and Kind/EngineId
+are used interchangeably in the rest of this older document.)
 
-The main window is a sidebar + VM-card list (an ESXi-inventory-view look,
-not a plain table): each card shows a status dot (green/amber/gray), the
-VM's kind and architecture, and **live** CPU%/memory - real numbers read
+The main window is a sidebar (Host/Environments/Storage/Networking/
+Engines) plus, for Environments, a grid: each row shows a status dot
+(green/amber/gray), the Environment's engine and architecture, and
+**live** CPU%/memory - real numbers read
 straight from the actual `qemu-system-*.exe`/`riscv-emu.exe` process via
 `Process.TotalProcessorTime`/`WorkingSet64` (`VmProcessManager`/
 `RiscvEmuProcessManager.GetResourceUsage`), not anything the guest
@@ -33,9 +38,12 @@ seconds alongside the existing QMP guest-status check.
   accelerator (`tcg` always available, `whpx` if Hyper-V Platform is on),
   disk image, CD-ROM/ISO, network mode, display backend, boot order, free-form
   extra arguments.
-- **Disk creation** - a "New..." button next to the disk field shells out to
-  QEMU's own `qemu-img.exe create -f qcow2`, rather than writing an image
-  format itself.
+- **Disk creation** - a "New..." button next to the disk field (which
+  opens the same dialog the Storage page's own "Create disk" does) picks
+  raw (written directly, no QEMU needed) or qcow2 (`qemu-img.exe create`),
+  never overwrites an existing file, and records every disk it makes in a
+  small registry so it stays visible on the Storage page even after its
+  own Environment is later deleted.
 - **Start** - builds the argument list and starts the process with the
   windowed-subsystem build (`qemu-system-<arch>w.exe`) so no console window
   flashes behind the app. With Display set to `gtk`/`sdl`, QEMU opens its
@@ -57,11 +65,26 @@ seconds alongside the existing QMP guest-status check.
 
 ## riscv-emu VMs
 
+> **Historical note:** this section (and "Two real differences from the
+> QEMU path" below it) describes riscv-emu as it was when this was
+> written - mid-development, not yet reaching a shell. None of that is
+> true any more: riscv-emu now boots a real kernel to an interactive
+> shell, has a graceful Shut Down (`Workload.ShutdownCommand`, typed at
+> the console, the same as any other Environment's own Edit window
+> shows), virtio-blk disk and virtio-net NAT (see the root
+> [`README.md`](../README.md)), and a bare-metal ELF workload with a GDB
+> stub (roadmap item 3 - see [`vision/VISION.md`](../vision/VISION.md)).
+> It is still a single-hart machine with no SMP, and memory is
+> configurable (`Platform.MemoryMB`, defaulting to 512 MB) rather than
+> truly fixed. The mechanics described below (`RiscvEmuBoot`,
+> `DtbBuilder`, `RiscvEmuProcessManager`) are still how the
+> `LinuxKernel` workload boots today.
+
 A "New Environment" now asks which kind to create. For "riscv-emu" the form is much
 shorter - a name, a kernel `Image` path, an optional initramfs, and extra
-kernel boot-command-line arguments - because there is no QMP, no display
-backend choice, no disk/CD-ROM, and memory/CPU are fixed (riscv-emu is a
-single-hart, 256 MiB machine today). Starting one:
+kernel boot-command-line arguments - because there is no QMP or display
+backend choice, and CPU is fixed at one hart (riscv-emu has no SMP today).
+Starting one:
 
 1. `Services/RiscvEmuBoot.cs` builds the same command line
    `riscv-emu/boot/boot.sh` does, but in C# rather than shelling out to it -
@@ -77,22 +100,15 @@ single-hart, 256 MiB machine today). Starting one:
    the guest's own console output is not guaranteed to be valid UTF-8), and
    a `ConsoleWindow` shows it live, auto-opened on Start.
 
-Two real differences from the QEMU path, not oversights:
-
-- **No graceful stop.** Real QEMU has QMP's `system_powerdown` (an ACPI
-  signal the guest OS decides whether to honor). riscv-emu has no equivalent
-  control channel - Stop and Force Stop both just terminate the process.
-- **Console input is wired up but currently inert.** `ConsoleWindow` sends
-  whatever is typed to the process's stdin, but `riscv-emu/boot/firmware.S`'s
-  SBI legacy console-read call always answers "no input available" - nothing
-  on the guest side reads it yet. Left connected on purpose so a future
-  firmware fix (making that call actually check stdin) needs no GUI-side
-  change to become interactive.
-
-Since `riscv-emu` is mid-development (see its own README's "Where this
-stands" - it does not yet reach a shell), expect the console to show real
-boot progress and then go quiet at whatever point `riscv-emu` currently
-gets stuck, not a login prompt.
+One real difference from the QEMU path remains, not an oversight:
+**no ACPI-style graceful stop.** Real QEMU has QMP's `system_powerdown` (a
+signal the guest OS decides whether to honor). riscv-emu has no equivalent
+control-channel signal - its own graceful Shut Down instead types
+`Workload.ShutdownCommand` (default `poweroff`) at the console and waits
+for the process to exit on its own, same as typing it by hand would; Force
+Stop still just terminates the process either way. Console input itself is
+fully interactive today (see `vision/NEXT.md` and the root README's own
+Status for what else changed since this section was first written).
 
 ## QEMU VMs with Display = "console"
 
