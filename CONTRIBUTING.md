@@ -58,3 +58,19 @@ request is opened.
 pushes to `main` itself (i.e. after a merge) - not on every push to a
 working branch. Push a branch as often as you like without triggering a
 full CI run; open the pull request when you want CI to check it.
+
+## Screenshots and other images
+
+Claude never adds, replaces, or edits an image committed to this
+repository (`docs/`, README images, any `.png`/`.jpg`/`.gif`) on its
+own, even to fix one it notices is stale or wrong - a screenshot it
+captured unsupervised has repeatedly leaked things a published repo
+should not show (the real machine's hostname/username in the app's own
+title bar, a badly cropped window edge).
+
+The actual process: Claude prepares the app (starts it with a demo
+Environment already set up) and says exactly where to save the file.
+The person takes the screenshot themselves, crops and checks it, and
+only then explicitly says "screenshot schválený" ("screenshot
+approved"). Only after that does Claude commit that exact file,
+unmodified - never a screenshot it captured itself.

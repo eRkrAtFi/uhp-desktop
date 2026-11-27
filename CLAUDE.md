@@ -27,3 +27,19 @@ repository (`riscv-emu/`, `QemuManager/`, `vision/`, `docs/`).
   check; force-pushes and branch deletion are disabled. No approving
   review count is required (there is no second reviewer to require it
   from) - the merge button itself is the approval.
+
+## Screenshots and other images
+
+- Never add, replace, or edit an image committed to this repository
+  (`docs/`, README images, any `.png`/`.jpg`/`.gif`) without being asked
+  to - not even to fix a stale one noticed in passing. A screenshot
+  captured unsupervised has repeatedly leaked things a published repo
+  should not show (the real machine's hostname/username in the app's
+  own title bar, a badly cropped window edge) - this happened more than
+  once before this rule existed.
+- The actual process: Claude prepares the app (starts it with a demo
+  Environment already set up) and tells the user exactly where to save
+  the file. The user takes the screenshot themselves, crops and checks
+  it, and only then explicitly says "screenshot schválený" ("screenshot
+  approved"). Only after that does Claude commit that exact file,
+  unmodified - never a screenshot Claude captured itself.
