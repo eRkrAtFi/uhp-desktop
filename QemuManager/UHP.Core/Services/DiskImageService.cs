@@ -10,16 +10,19 @@ namespace QemuManager.Services;
 /// virtual disks. This app never writes a disk image format itself.</summary>
 public static class DiskImageService
 {
-    /// <summary>qemu-img info --output=json's own format/virtual-size/
-    /// actual-size for one disk image - the Storage page's own per-disk
-    /// detail (Phase 6). Null fields (not an empty record) when qemu-img
-    /// itself is not available or path does not look like an image
-    /// qemu-img can read at all - the page shows "unknown" for those
-    /// rather than a wrong zero.</summary>
-    public static async Task<(string? Format, long? VirtualSizeBytes, long? ActualSizeBytes)> GetInfoAsync(string qemuDir, string path)
+    /// <summary>qemu-img info --output=json's own format/virtual-size for
+    /// one disk image - the Storage page's own per-disk detail (Phase 6).
+    /// Deliberately NOT its own "actual-size" (see
+    /// Services.IVmService.GetDiskInventoryAsync's own remarks on why
+    /// "size on disk" is always read straight from the file instead,
+    /// never through qemu-img at all - PR #7 feedback). Null fields (not
+    /// an empty record) when qemu-img itself is not available or path
+    /// does not look like an image qemu-img can read at all - the page
+    /// shows "unknown" for those rather than a wrong zero.</summary>
+    public static async Task<(string? Format, long? VirtualSizeBytes)> GetInfoAsync(string qemuDir, string path)
     {
         var binary = QemuLocator.ImgBinary(qemuDir);
-        if (binary == null || !File.Exists(path)) return (null, null, null);
+        if (binary == null || !File.Exists(path)) return (null, null);
 
         var psi = new ProcessStartInfo
         {
@@ -36,21 +39,20 @@ public static class DiskImageService
         try
         {
             using var process = Process.Start(psi);
-            if (process == null) return (null, null, null);
+            if (process == null) return (null, null);
             var stdout = await process.StandardOutput.ReadToEndAsync();
             await process.WaitForExitAsync();
-            if (process.ExitCode != 0) return (null, null, null);
+            if (process.ExitCode != 0) return (null, null);
 
             using var doc = JsonDocument.Parse(stdout);
             var root = doc.RootElement;
             string? format = root.TryGetProperty("format", out var f) ? f.GetString() : null;
             long? virtualSize = root.TryGetProperty("virtual-size", out var v) ? v.GetInt64() : null;
-            long? actualSize = root.TryGetProperty("actual-size", out var a) ? a.GetInt64() : null;
-            return (format, virtualSize, actualSize);
+            return (format, virtualSize);
         }
         catch (Exception)
         {
-            return (null, null, null);
+            return (null, null);
         }
     }
 

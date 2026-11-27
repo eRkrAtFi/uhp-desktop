@@ -11,6 +11,10 @@ public class DiskListItem
     public DiskListItem(DiskInfo info) => Info = info;
 
     public string Path => Info.Path;
+    /// <summary>Just the file name - the grid's own "Name" column (PR #7
+    /// feedback); the full Path is a tooltip on that cell instead of its
+    /// own always-visible column.</summary>
+    public string FileName => System.IO.Path.GetFileName(Info.Path);
     public string Format => Info.Format ?? "unknown";
     public string VirtualSizeText => FormatBytes(Info.VirtualSizeBytes);
     public string ActualSizeText => FormatBytes(Info.ActualSizeBytes);

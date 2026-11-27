@@ -14,7 +14,13 @@ public record DiskInfo(
     /// <summary>From qemu-img info, e.g. "qcow2"/"raw" - null if QEMU is
     /// not available to ask, or the file does not exist.</summary>
     string? Format,
+    /// <summary>From qemu-img info - null if QEMU is not available, or
+    /// the file does not exist.</summary>
     long? VirtualSizeBytes,
+    /// <summary>The real file size (FileInfo.Length) - never from
+    /// qemu-img's own "actual-size", so this is always available
+    /// (whether or not QEMU happens to be installed) and always matches
+    /// what Explorer/"Open folder" itself would show.</summary>
     long? ActualSizeBytes,
     /// <summary>Every Environment (by Name) whose Workload.DiskPath is
     /// this exact file - empty for an orphan file with nothing

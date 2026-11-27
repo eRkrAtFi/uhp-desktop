@@ -2,10 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Win32;
 using QemuManager.Models;
 
 namespace QemuManager.Services;
@@ -471,7 +472,12 @@ public class VmService : IVmService, IDisposable
         {
             AppPaths.EnsureDirectories();
             var root = Path.GetPathRoot(AppPaths.AppDataDir);
-            return string.IsNullOrEmpty(root) ? "unknown" : FormatBytes(new DriveInfo(root).AvailableFreeSpace);
+            if (string.IsNullOrEmpty(root)) return "unknown";
+            var drive = new DriveInfo(root);
+            // DriveInfo.Name is "C:\" - the drive letter this free-space
+            // figure is actually about (PR #7 feedback), not just a bare
+            // number with no indication of which disk it is.
+            return $"{FormatBytes(drive.AvailableFreeSpace)} free on {drive.Name}";
         }
         catch (Exception)
         {
@@ -487,6 +493,42 @@ public class VmService : IVmService, IDisposable
         try { return Path.GetFullPath(path); } catch (Exception) { return path; }
     }
 
+    /// <summary>The real CPU model name (e.g. "AMD Ryzen 9 5900X 12-Core
+    /// Processor"), from the same registry value Windows' own System
+    /// Information/Task Manager read it from - PROCESSOR_IDENTIFIER (the
+    /// env var this used before PR #7 feedback) only ever gives the
+    /// family/model/stepping numbers, not this friendlier name.</summary>
+    private static string GetCpuDescription()
+    {
+        // This app only ever runs on Windows (RuntimeIdentifier win-x64,
+        // choco-installed Windows-only tools, WHPX) - CA1416 flags
+        // Registry.GetValue as "Windows-only" because this project's own
+        // TargetFramework is plain net8.0, not because there is any real
+        // cross-platform risk here to fix.
+#pragma warning disable CA1416
+        var name = Registry.GetValue(@"HKEY_LOCAL_MACHINE\HARDWARE\DESCRIPTION\System\CentralProcessor\0", "ProcessorNameString", null) as string;
+#pragma warning restore CA1416
+        return $"{(string.IsNullOrWhiteSpace(name) ? "Unknown CPU" : name.Trim())}, {Environment.ProcessorCount} logical processors";
+    }
+
+    /// <summary>"Windows 11 Pro (build 26300)" - edition from the
+    /// registry's own ProductName (e.g. "Windows 10 Pro"), but the
+    /// "Windows 10"/"Windows 11" part recomputed from the real build
+    /// number instead of trusted from that same string: an in-place
+    /// upgrade past build 22000 (where Windows 11 actually starts) can
+    /// leave ProductName still saying "Windows 10" even though the
+    /// running OS already is Windows 11 in every way that matters here.</summary>
+    private static string GetOsDescription()
+    {
+        var build = Environment.OSVersion.Version.Build;
+        var windowsName = build >= 22000 ? "Windows 11" : "Windows 10";
+#pragma warning disable CA1416 // this app only ever runs on Windows - see GetCpuDescription's own remarks
+        var productName = Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion", "ProductName", null) as string ?? "";
+#pragma warning restore CA1416
+        var edition = Regex.Replace(productName, @"^Windows (10|11)\s*", "").Trim();
+        return edition.Length > 0 ? $"{windowsName} {edition} (build {build})" : $"{windowsName} (build {build})";
+    }
+
     public HostInfo GetHostInfo()
     {
         EnvironmentConfig[] snapshot;
@@ -495,14 +537,8 @@ public class VmService : IVmService, IDisposable
         var runningSnapshots = snapshot.Where(IsRunning).Select(GetSnapshot).ToList();
 
         return new HostInfo(
-            RuntimeInformation.OSDescription,
-            // PROCESSOR_IDENTIFIER (e.g. "Intel64 Family 6 Model 151
-            // Stepping 2, GenuineIntel") is set by Windows itself for
-            // every process with no extra dependency or elevation needed
-            // - not the friendlier marketing name a Win32_Processor WMI
-            // query would give, but a real, truthful description all the
-            // same.
-            $"{Environment.GetEnvironmentVariable("PROCESSOR_IDENTIFIER") ?? "Unknown CPU"}, {Environment.ProcessorCount} logical processors",
+            GetOsDescription(),
+            GetCpuDescription(),
             // GC.GetGCMemoryInfo().TotalAvailableMemoryBytes is total
             // installed physical RAM on a real machine (the standard
             // .NET technique for this since no direct cross-platform
@@ -566,18 +602,33 @@ public class VmService : IVmService, IDisposable
         {
             var exists = File.Exists(rawPath);
             string? format = null;
-            long? virtualSize = null, actualSize = null;
+            long? virtualSize = null;
             if (exists && QemuLocator.LooksLikeQemuDir(settings.QemuDir))
-                (format, virtualSize, actualSize) = await DiskImageService.GetInfoAsync(settings.QemuDir, rawPath);
+                (format, virtualSize) = await DiskImageService.GetInfoAsync(settings.QemuDir, rawPath);
+
+            // Size on disk is always the real file size (PR #7 feedback),
+            // not qemu-img info's own "actual-size" - qemu-img is needed
+            // for Format/VirtualSizeBytes (this app does not parse qcow2
+            // itself), but "how many bytes does this file actually take"
+            // has one correct answer regardless of whether QEMU happens
+            // to be installed right now, and FileInfo.Length is always
+            // that answer directly, for any format.
+            long? actualSize = exists ? new FileInfo(rawPath).Length : null;
 
             result.Add(new DiskInfo(rawPath, exists, format, virtualSize, actualSize, usedBy[normalized]));
         }
         return result.OrderBy(d => d.Path, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
-    // Both engines' default user-mode network is 10.0.2.0/24 - QEMU's own
-    // long-standing built-in default, and riscv-emu's net.c deliberately
-    // matches it (see its own NET_GUEST_IP/NET_GATEWAY_IP).
+    // Both engines' NAT network is 10.0.2.0/24 - but with a different
+    // degree of certainty each (PR #7 feedback): riscv-emu's net.c
+    // hardcodes exactly these two addresses with no way to configure
+    // anything else, so they are simply fact for it. QEMU's own user-mode
+    // NAT only *defaults* to this network - it is QEMU's own long-
+    // standing built-in default, but a real QEMU command line could
+    // still override it (e.g. via Workload.ExtraArgs, which this app's
+    // UI never inspects for that), so "(default)" is appended there
+    // rather than stating it as a fact this app actually verified.
     private const string NatGuestAddress = "10.0.2.15";
     private const string NatGatewayAddress = "10.0.2.2";
 
@@ -593,12 +644,14 @@ public class VmService : IVmService, IDisposable
             // NIC at all, including for riscv-emu, which has no other
             // backend choice of its own.
             var isNat = string.Equals(vm.Platform.NetworkMode, "user", StringComparison.OrdinalIgnoreCase);
+            var isQemu = vm.EngineId == "Qemu";
+            var suffix = isNat && isQemu ? " (default)" : "";
             return new NetworkInfo(
                 vm.Name,
                 _engines.GetFor(vm).DisplayName,
                 isNat ? "NAT" : "none",
-                isNat ? NatGuestAddress : null,
-                isNat ? NatGatewayAddress : null);
+                isNat ? NatGuestAddress + suffix : null,
+                isNat ? NatGatewayAddress + suffix : null);
         }).ToList();
     }
 

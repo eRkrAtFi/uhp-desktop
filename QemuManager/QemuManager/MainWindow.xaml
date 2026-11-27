@@ -531,8 +531,7 @@
                          lives (see MainWindow.xaml.cs's RefreshSummary). -->
                     <ScrollViewer x:Name="HostPage" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
                         <StackPanel Margin="32">
-                            <TextBlock Text="Host" FontSize="20" FontWeight="Bold" Margin="0,0,0,8"/>
-                            <TextBlock x:Name="HostSummaryText" Foreground="{StaticResource TextDim}" Margin="0,0,0,16"/>
+                            <TextBlock Text="Host" FontSize="20" FontWeight="Bold" Margin="0,0,0,16"/>
 
                             <Border Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" Padding="16" Margin="0,0,0,20">
                                 <Grid>
@@ -688,7 +687,18 @@
                         </Border>
                         <DataGrid x:Name="DiskList" Margin="0" SelectionChanged="DiskList_SelectionChanged" AutomationProperties.Name="Disk list">
                             <DataGrid.Columns>
-                                <DataGridTextColumn Header="Path" Binding="{Binding Path}" Width="3*"/>
+                                <!-- Just the file name, not the full path -
+                                     the full path is a tooltip on this cell
+                                     instead (PR #7 feedback), not its own
+                                     always-visible column competing with
+                                     Used by for width. -->
+                                <DataGridTextColumn Header="Name" Binding="{Binding FileName}" Width="2*">
+                                    <DataGridTextColumn.ElementStyle>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="ToolTip" Value="{Binding Path}"/>
+                                        </Style>
+                                    </DataGridTextColumn.ElementStyle>
+                                </DataGridTextColumn>
                                 <DataGridTextColumn Header="Format" Binding="{Binding Format}" Width="80"/>
                                 <DataGridTextColumn Header="Virtual size" Binding="{Binding VirtualSizeText}" Width="100"/>
                                 <DataGridTextColumn Header="Size on disk" Binding="{Binding ActualSizeText}" Width="100"/>

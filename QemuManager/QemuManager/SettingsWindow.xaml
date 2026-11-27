@@ -13,24 +13,29 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <TextBlock Grid.Row="0" Text="riscv-emu Shut Down timeout" Margin="0,0,0,6"
+        <TextBlock Grid.Row="0" Text="riscv-emu Shut Down timeout" Margin="0,0,0,2"
                    FontWeight="Bold"/>
-        <TextBlock Grid.Row="0" Text="(how long Shut Down waits for the guest to power itself off before offering Force Stop)"
-                   Opacity="0.7" HorizontalAlignment="Right" FontSize="11" TextWrapping="Wrap" MaxWidth="320"/>
+        <!-- Stacked below the heading, not beside it (PR #7 feedback) -
+             side by side at this window's own Width, the wrapped
+             description overlapped the heading's own text instead of
+             sitting cleanly underneath it. -->
+        <TextBlock Grid.Row="1" Text="(how long Shut Down waits for the guest to power itself off before offering Force Stop)"
+                   Opacity="0.7" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,6"/>
 
-        <StackPanel Grid.Row="1" Orientation="Horizontal">
+        <StackPanel Grid.Row="2" Orientation="Horizontal">
             <TextBox x:Name="RiscvShutdownTimeoutBox" Width="60" AutomationProperties.Name="riscv-emu Shut Down timeout in seconds"/>
             <TextBlock Text="seconds" VerticalAlignment="Center" Margin="8,0,0,0"/>
         </StackPanel>
 
-        <TextBlock x:Name="ValidationText" Grid.Row="2" Margin="0,8,0,0" Foreground="{StaticResource ErrorText}" TextWrapping="Wrap" VerticalAlignment="Top"/>
+        <TextBlock x:Name="ValidationText" Grid.Row="3" Margin="0,8,0,0" Foreground="{StaticResource ErrorText}" TextWrapping="Wrap" VerticalAlignment="Top"/>
 
-        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
+        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
             <Button x:Name="OkButton" Content="OK" Click="OkButton_Click"/>
             <Button x:Name="CancelButton" Content="Cancel" Click="CancelButton_Click"/>
         </StackPanel>
@@ -40,7 +45,7 @@
              (see QemuManager.csproj's SetSourceRevisionId target) - so
              "which build is this" stops depending on remembering a
              publish timestamp. -->
-        <TextBlock x:Name="VersionText" Grid.Row="4" Margin="0,10,0,0" FontSize="11"
+        <TextBlock x:Name="VersionText" Grid.Row="5" Margin="0,10,0,0" FontSize="11"
                    Foreground="{StaticResource TextDim}" HorizontalAlignment="Right"/>
     </Grid>
 </Window>

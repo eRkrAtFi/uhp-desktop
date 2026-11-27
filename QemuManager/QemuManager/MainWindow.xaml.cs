@@ -590,13 +590,12 @@ public partial class MainWindow : Window
 
     private void RefreshSummary()
     {
-        var running = _items.Count(i => i.IsRunning);
         // The navigator card this used to live in is gone (Phase 1 fix) -
         // the VM count moves to a small badge on the node itself, and the
-        // running/total summary moves to the Host page, where ESXi/Proxmox
-        // would put host-level totals too.
+        // running/total summary moves to the Host page's own "Running /
+        // Total" tile (RefreshHostPage) - no longer duplicated here as a
+        // second, separate line above it (PR #7 feedback).
         VmCountBadge.Text = _items.Count.ToString();
-        HostSummaryText.Text = $"{running} running / {_items.Count} total Environment{(_items.Count == 1 ? "" : "s")}.";
         RefreshHostPage();
     }
 
