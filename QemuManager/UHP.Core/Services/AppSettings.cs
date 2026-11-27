@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 
@@ -30,6 +31,14 @@ public class AppSettings
     /// still being a bounded wait rather than an indefinite one for a
     /// guest that is not going to respond at all.</summary>
     public int RiscvShutdownTimeoutSeconds { get; set; } = 60;
+
+    /// <summary>Remembered DataGrid column widths, keyed "GridName.
+    /// ColumnHeader" (e.g. "RecentTasksList.Result") - every resizable
+    /// grid's own columns (Environments, Storage, Networking, Recent
+    /// Tasks) persist their width here on close and restore it on the
+    /// next launch (PR #7 feedback), instead of resetting to this app's
+    /// own hardcoded default ratios every time.</summary>
+    public Dictionary<string, double> ColumnWidths { get; set; } = new();
 
     /// <summary>A "qemu" folder bundled next to the .exe (see
     /// package-portable.ps1) wins, then anywhere qemu-system-*.exe is

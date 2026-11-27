@@ -25,6 +25,7 @@ public class VmService : IVmService, IDisposable
     private readonly EnvironmentStore _store = new();
     private readonly VmProcessManager _qemu = new();
     private readonly RiscvEmuProcessManager _riscv = new();
+    private readonly DiskRegistryStore _diskRegistry = new();
 
     // The one place a new engine gets registered (see
     // vision/VISION.md's roadmap item 5) - everything below looks an
@@ -588,14 +589,14 @@ public class VmService : IVmService, IDisposable
         }
         foreach (var vm in snapshot) Track(vm.Workload.DiskPath, vm.Name);
 
-        // Anything else sitting in AppPaths.DisksDir - a disk created but
-        // never attached to anything yet, or one left behind after its
-        // own Environment was deleted - stays visible (and deletable)
-        // here, not silently invisible just because no Environment
-        // currently references it.
-        if (Directory.Exists(AppPaths.DisksDir))
-            foreach (var file in Directory.EnumerateFiles(AppPaths.DisksDir))
-                Track(file, null);
+        // Every disk ever created via "Create disk" or added via "Add
+        // existing disk" (_diskRegistry), regardless of where it
+        // actually lives - not a scan of AppPaths.DisksDir, which could
+        // never see a disk saved somewhere else and so silently lost
+        // track of it (no longer "removable from the list" at all) the
+        // moment its owning Environment was deleted. Stays visible here
+        // whether or not any Environment currently references it.
+        foreach (var path in _diskRegistry.LoadAll()) Track(path, null);
 
         var result = new List<DiskInfo>();
         foreach (var (normalized, rawPath) in rawPathByNormalized)
@@ -655,45 +656,75 @@ public class VmService : IVmService, IDisposable
         }).ToList();
     }
 
-    /// <summary>Synchronous under the hood (File.Delete, no engine or
-    /// qemu-img call involved) - Task-returning only because
-    /// IVmService.DeleteDiskFileAsync is, matching every other
-    /// potentially-slow action callers already await (Start/Shutdown/
-    /// GetDiskInventoryAsync itself), not because this one specifically
-    /// needs to run off the calling thread.</summary>
-    public Task<string> DeleteDiskFileAsync(string path)
+    /// <summary>Every Environment (by Name) whose Workload.DiskPath is
+    /// this exact file - empty if none. Deliberately "used at all", not
+    /// "used by a *running* one" - a disk attached to a stopped
+    /// Environment could be started at any moment. Used both by
+    /// RemoveDiskFromListAsync's own guard and by CreateDiskWindow's own
+    /// "can this existing file ever be overwritten" check.</summary>
+    public IReadOnlyList<string> GetEnvironmentsUsingDisk(string path)
     {
         var normalized = NormalizePath(path);
+        EnvironmentConfig[] snap;
+        lock (_configsLock) snap = _configs.ToArray();
+        return snap.Where(c => string.Equals(NormalizePath(c.Workload.DiskPath ?? ""), normalized, StringComparison.OrdinalIgnoreCase))
+                    .Select(c => c.Name).ToList();
+    }
 
+    /// <summary>Un-registers path from the disk registry - it never
+    /// touches the actual file (PR #7 feedback: an earlier version of
+    /// this deleted it, which is a far more dangerous default than this
+    /// page actually needs - "Open folder" is there for anyone who
+    /// genuinely wants to delete the file themselves). Synchronous under
+    /// the hood (plain JSON read/write, no engine or qemu-img call
+    /// involved) - Task-returning only because IVmService.
+    /// RemoveDiskFromListAsync is, matching every other potentially-slow
+    /// action callers already await.</summary>
+    public Task<string> RemoveDiskFromListAsync(string path)
+    {
         string? Blocked()
         {
-            EnvironmentConfig[] snap;
-            lock (_configsLock) snap = _configs.ToArray();
-            var usedBy = snap.Where(c => string.Equals(NormalizePath(c.Workload.DiskPath ?? ""), normalized, StringComparison.OrdinalIgnoreCase))
-                              .Select(c => c.Name).ToList();
-            // Deliberately "used by any Environment at all", not "used by
-            // a *running* one" - a disk attached to a stopped Environment
-            // could be started at any moment, and there is no "Remove
-            // from list" meaning for a disk that is still somebody's own
-            // Workload.DiskPath either way.
-            return usedBy.Count > 0 ? $"Cannot delete: still used by {string.Join(", ", usedBy)}." : null;
+            var usedBy = GetEnvironmentsUsingDisk(path);
+            return usedBy.Count > 0 ? $"Cannot remove: still used by {string.Join(", ", usedBy)}." : null;
         }
 
         var blocked = Blocked();
         if (blocked != null) return Task.FromResult(blocked);
 
-        // Re-checked immediately before the actual delete, not only once
-        // up front - closes the window for a real race against another
-        // Save/StartAsync that attaches this exact disk to some
+        // Re-checked immediately before the actual removal, not only
+        // once up front - closes the window for a real race against
+        // another Save/StartAsync that attaches this exact disk to some
         // Environment in between the caller's own "is this safe to
-        // offer" read (GetDiskInventoryAsync, well before the
-        // confirmation dialog the UI shows) and this call actually
-        // running.
+        // offer" read (GetDiskInventoryAsync, well before whatever the
+        // UI shows) and this call actually running.
         blocked = Blocked();
         if (blocked != null) return Task.FromResult(blocked);
 
-        var message = DiskImageService.DeleteFile(path);
-        RecordTask("Delete Disk", path, message.StartsWith("Deleted"), message);
+        _diskRegistry.Remove(path);
+        var message = $"Removed {path} from the list (file left untouched).";
+        RecordTask("Remove Disk", path, true, message);
+        return Task.FromResult(message);
+    }
+
+    /// <summary>Registers path in the disk registry - "Add existing
+    /// disk" (Storage page) calls this directly for a disk the user
+    /// already has; CreateDiskWindow also calls it right after a
+    /// successful create, so "every disk created via Create disk is
+    /// recorded regardless of location" holds without Create disk and
+    /// Add existing disk needing two different code paths to get there.
+    /// Refuses (returns a message, registers nothing) for a path that
+    /// does not actually exist - there is nothing real to track yet.</summary>
+    public Task<string> RegisterDiskAsync(string path)
+    {
+        if (!File.Exists(path))
+        {
+            var missing = $"{path} does not exist.";
+            RecordTask("Add Disk", path, false, missing);
+            return Task.FromResult(missing);
+        }
+        _diskRegistry.Add(path);
+        var message = $"Added {path} to the disk list.";
+        RecordTask("Add Disk", path, true, message);
         return Task.FromResult(message);
     }
 

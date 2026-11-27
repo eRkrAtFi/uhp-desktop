@@ -74,6 +74,7 @@ public partial class MainWindow : Window
         }
 
         _settings = AppSettings.Load();
+        RestoreColumnWidths();
         // A VM's process exiting without this window's own Power On/Shut
         // Down/Force Stop handlers having asked for it (closing a QEMU
         // gtk/sdl window directly, a crash, or a graceful ACPI shutdown
@@ -266,9 +267,26 @@ public partial class MainWindow : Window
     private async void CreateDiskButton_Click(object sender, RoutedEventArgs e)
     {
         Directory.CreateDirectory(AppPaths.DisksDir);
-        var suggestedPath = Path.Combine(AppPaths.DisksDir, "disk.qcow2");
+        // The first available "disk.qcow2"/"disk-2.qcow2"/... - a real
+        // bug otherwise (two different disks created with the same
+        // suggested default path, the second silently overwriting the
+        // first with no warning at all) - on top of (not instead of)
+        // CreateDiskWindow's own refusal to overwrite regardless.
+        var suggestedPath = DiskImageService.SuggestUniquePath(AppPaths.DisksDir, "disk", ".qcow2");
         var dialog = new CreateDiskWindow(_settings.QemuDir, suggestedPath, _vmService) { Owner = this };
+        // CreateDiskWindow itself registers CreatedPath on success (see
+        // its own CreateButton_Click) - every disk made this way is
+        // recorded regardless of which entry point opened the dialog,
+        // not just the Storage page's own.
         if (dialog.ShowDialog() == true) await RefreshStoragePageAsync();
+    }
+
+    private async void AddExistingDiskButton_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog { Filter = "Disk image (*.img;*.raw;*.qcow2)|*.img;*.raw;*.qcow2|All files (*.*)|*.*" };
+        if (dialog.ShowDialog() != true) return;
+        await _vmService.RegisterDiskAsync(dialog.FileName);
+        await RefreshStoragePageAsync();
     }
 
     private void OpenDiskFolderButton_Click(object sender, RoutedEventArgs e)
@@ -283,15 +301,16 @@ public partial class MainWindow : Window
         catch (Exception ex) { MessageBox.Show(this, $"Could not open folder: {ex.Message}", "Open folder", MessageBoxButton.OK, MessageBoxImage.Warning); }
     }
 
+    /// <summary>Un-registers the disk from the list - never deletes the
+    /// actual file (PR #7 feedback: an earlier version of this deleted
+    /// an unused disk's file, which is a far more dangerous default than
+    /// this page actually needs - Open folder is there for anyone who
+    /// genuinely wants to delete it themselves).</summary>
     private async void RemoveDiskButton_Click(object sender, RoutedEventArgs e)
     {
         var disk = SelectedDisk;
         if (disk == null || !disk.CanRemove) return;
-        var result = MessageBox.Show(this,
-            $"Permanently delete {disk.Path}?\n\nThis disk is not used by any Environment.",
-            "Remove disk", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-        if (result != MessageBoxResult.Yes) return;
-        await _vmService.DeleteDiskFileAsync(disk.Path);
+        await _vmService.RemoveDiskFromListAsync(disk.Path);
         await RefreshStoragePageAsync();
     }
 
@@ -303,6 +322,38 @@ public partial class MainWindow : Window
     private void RefreshNetworkingPage()
     {
         NetworkList.ItemsSource = _vmService.GetNetworkInventory().Select(n => new NetworkListItem(n)).ToList();
+    }
+
+    /// <summary>Full, selectable/copyable text for one Storage row - a
+    /// tooltip alone cannot be selected or copied (PR #7 feedback).</summary>
+    private void DiskList_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (DiskList.SelectedItem is not DiskListItem disk) return;
+        var dialog = new RowDetailWindow("Disk: " + disk.FileName, new[]
+        {
+            ("Path", disk.Path),
+            ("Format", disk.Format),
+            ("Virtual size", disk.VirtualSizeText),
+            ("Size on disk", disk.ActualSizeText),
+            ("Used by", disk.UsedByText),
+            ("Exists", disk.ExistsText),
+        }) { Owner = this };
+        dialog.ShowDialog();
+    }
+
+    /// <summary>Same as DiskList_MouseDoubleClick, for one Networking row.</summary>
+    private void NetworkList_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (NetworkList.SelectedItem is not NetworkListItem net) return;
+        var dialog = new RowDetailWindow("Network: " + net.EnvironmentName, new[]
+        {
+            ("Environment", net.EnvironmentName),
+            ("Engine", net.EngineDisplayName),
+            ("Mode", net.Mode),
+            ("Guest address", net.GuestAddressText),
+            ("Gateway", net.GatewayAddressText),
+        }) { Owner = this };
+        dialog.ShowDialog();
     }
 
     private VmListItem? SelectedItem => VmList.SelectedItem as VmListItem;
@@ -729,6 +780,36 @@ public partial class MainWindow : Window
     /// in place: at most 200 rows, cheap enough that there is no real
     /// reason to build the incremental-update machinery that would avoid
     /// it.</summary>
+    // Every resizable grid this window owns, paired with the key its own
+    // column widths are saved under in AppSettings.ColumnWidths (PR #7
+    // feedback: a column resized by hand used to reset to this app's own
+    // hardcoded default ratio on every single restart).
+    private IEnumerable<(DataGrid Grid, string Key)> ResizableGrids()
+    {
+        yield return (VmList, "Environments");
+        yield return (DiskList, "Storage");
+        yield return (NetworkList, "Networking");
+        yield return (RecentTasksList, "RecentTasks");
+    }
+
+    private void RestoreColumnWidths()
+    {
+        foreach (var (grid, key) in ResizableGrids())
+            foreach (var column in grid.Columns)
+                if (_settings.ColumnWidths.TryGetValue($"{key}.{column.Header}", out var width) && width > 0)
+                    column.Width = new DataGridLength(width);
+    }
+
+    private void SaveColumnWidths()
+    {
+        foreach (var (grid, key) in ResizableGrids())
+            foreach (var column in grid.Columns)
+                _settings.ColumnWidths[$"{key}.{column.Header}"] = column.ActualWidth;
+        _settings.Save();
+    }
+
+    private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e) => SaveColumnWidths();
+
     private void RefreshRecentTasks() => RecentTasksList.ItemsSource = _vmService.GetRecentTasks();
 
     private void RecentTasksToggleButton_Click(object sender, RoutedEventArgs e)
@@ -737,7 +818,6 @@ public partial class MainWindow : Window
         if (collapsing)
         {
             _recentTasksExpandedHeight = RecentTasksRow.ActualHeight > 0 ? RecentTasksRow.ActualHeight : _recentTasksExpandedHeight;
-            RecentTasksColumnHeader.Visibility = Visibility.Collapsed;
             RecentTasksList.Visibility = Visibility.Collapsed;
             RecentTasksSplitter.IsEnabled = false;
             RecentTasksSplitter.Visibility = Visibility.Collapsed;
@@ -745,13 +825,30 @@ public partial class MainWindow : Window
         }
         else
         {
-            RecentTasksColumnHeader.Visibility = Visibility.Visible;
             RecentTasksList.Visibility = Visibility.Visible;
             RecentTasksSplitter.IsEnabled = true;
             RecentTasksSplitter.Visibility = Visibility.Visible;
             RecentTasksRow.Height = new GridLength(_recentTasksExpandedHeight);
         }
         RecentTasksToggleButton.Content = collapsing ? "Show" : "Hide";
+    }
+
+    /// <summary>Full, selectable/copyable text for one Recent Tasks row -
+    /// the grid's own cells truncate a long Target/Result, and a tooltip
+    /// alone cannot be selected or copied (PR #7 feedback).</summary>
+    private void RecentTasksList_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (RecentTasksList.SelectedItem is not TaskRecord task) return;
+        var dialog = new RowDetailWindow("Task: " + task.Name, new[]
+        {
+            ("Task", task.Name),
+            ("Target", task.Target),
+            ("Started", task.Started.ToString("yyyy-MM-dd HH:mm:ss")),
+            ("Completed", task.Completed?.ToString("yyyy-MM-dd HH:mm:ss") ?? "(still running)"),
+            ("Status", task.Status),
+            ("Result", task.Result),
+        }) { Owner = this };
+        dialog.ShowDialog();
     }
 
     private void NavigatorTree_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)

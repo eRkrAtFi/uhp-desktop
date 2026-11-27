@@ -222,21 +222,38 @@ public interface IVmService : IConsoleSource
     Task<IReadOnlyList<Models.EngineStatusInfo>> GetEngineStatusesAsync(AppSettings settings);
 
     /// <summary>Every disk image this app knows about - every
-    /// Environment's own Workload.DiskPath, plus anything else sitting in
-    /// AppPaths.DisksDir - the Storage page's data. Queries qemu-img info
-    /// for format/size when QEMU is available; Format/sizes are null
-    /// otherwise, not a wrong zero.</summary>
+    /// Environment's own Workload.DiskPath, plus everything in the disk
+    /// registry (DiskRegistryStore - every disk ever created via
+    /// "Create disk" or added via "Add existing disk", regardless of
+    /// where it actually lives) - the Storage page's data. Queries
+    /// qemu-img info for format/size when QEMU is available; Format/
+    /// sizes are null otherwise, not a wrong zero.</summary>
     Task<IReadOnlyList<Models.DiskInfo>> GetDiskInventoryAsync(AppSettings settings);
 
     /// <summary>Every Environment's own network configuration, read-only -
     /// the Networking page's data (no port forwarding yet).</summary>
     IReadOnlyList<Models.NetworkInfo> GetNetworkInventory();
 
-    /// <summary>Deletes a disk image file - refuses (returns a message,
-    /// deletes nothing) unless it is currently used by no Environment at
-    /// all, and separately refuses if, somehow, an Environment that does
-    /// reference this exact path is running right now - belt-and-
-    /// suspenders alongside the "used by no Environment" check itself,
-    /// not a substitute for the UI's own confirmation prompt.</summary>
-    Task<string> DeleteDiskFileAsync(string path);
+    /// <summary>Every Environment (by Name) whose Workload.DiskPath is
+    /// this exact file - empty if none. "Create disk" uses this to
+    /// decide whether overwriting an existing file can ever be offered
+    /// at all (never, if anything is actually using it).</summary>
+    IReadOnlyList<string> GetEnvironmentsUsingDisk(string path);
+
+    /// <summary>Un-registers a disk from the list - never deletes the
+    /// actual file (PR #7 feedback - "Open folder" is there for anyone
+    /// who genuinely wants to delete it themselves). Refuses (returns a
+    /// message, removes nothing) unless it is currently used by no
+    /// Environment at all, checked twice (once up front, once
+    /// immediately before the actual removal) to close a real race
+    /// against another Save/StartAsync attaching this exact disk to
+    /// some Environment in between.</summary>
+    Task<string> RemoveDiskFromListAsync(string path);
+
+    /// <summary>Registers an existing disk file in the list ("Add
+    /// existing disk", Storage page) - also what CreateDiskWindow calls
+    /// right after a successful create, so every disk made that way is
+    /// recorded the same way regardless of where it was saved. Refuses
+    /// (registers nothing) for a path that does not actually exist.</summary>
+    Task<string> RegisterDiskAsync(string path);
 }

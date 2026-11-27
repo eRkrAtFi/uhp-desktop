@@ -57,6 +57,14 @@ public static class AppPaths
 
     public static string SettingsFile { get; } = Path.Combine(AppDataDir, "settings.json");
 
+    /// <summary>Every disk path ever created or added via "Create disk"/
+    /// "Add existing disk" (Storage page) - see DiskRegistryStore. Not
+    /// tied to DisksDir at all: a disk saved somewhere else entirely
+    /// still has to stay visible (and removable from the list) once its
+    /// owning Environment is deleted, which a directory scan of
+    /// DisksDir alone could never see.</summary>
+    public static string DiskRegistryFile { get; } = Path.Combine(AppDataDir, "disks.json");
+
     /// <summary>Recent Tasks' own persisted history (see TaskHistoryStore) -
     /// one flat JSON array, not one file per record like VmStore's own
     /// vms/*.json: this is a single ordered list with a fixed cap

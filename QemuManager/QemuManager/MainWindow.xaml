@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:QemuManager"
         Title="UHP Desktop" Height="700" Width="1200" MinHeight="480" MinWidth="860"
-        Background="{StaticResource WindowBg}">
+        Background="{StaticResource WindowBg}" Closing="Window_Closing">
     <DockPanel>
         <!-- Top bar: product name, host name, search, settings. -->
         <Border DockPanel.Dock="Top" Background="{StaticResource PanelBg}" Padding="16,10"
@@ -264,7 +264,18 @@
                                         </DataTemplate>
                                     </DataGridTemplateColumn.CellTemplate>
                                 </DataGridTemplateColumn>
-                                <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="2*"/>
+                                <!-- Double-click already opens this
+                                     Environment's own full detail page
+                                     (Phase 3) - a long Name's own tooltip
+                                     is the quick, in-place way to read it
+                                     without leaving the grid at all. -->
+                                <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="2*">
+                                    <DataGridTextColumn.ElementStyle>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="ToolTip" Value="{Binding Name}"/>
+                                        </Style>
+                                    </DataGridTextColumn.ElementStyle>
+                                </DataGridTextColumn>
                                 <DataGridTextColumn Header="Status" Binding="{Binding StatusText}" Width="110"/>
                                 <DataGridTextColumn Header="Engine" Binding="{Binding Engine}" Width="90"/>
                                 <DataGridTextColumn Header="Architecture" Binding="{Binding Architecture}" Width="110"/>
@@ -680,12 +691,16 @@
                                 <TextBlock Text="Storage" FontSize="18" FontWeight="Bold" Margin="0,0,0,10"/>
                                 <StackPanel Orientation="Horizontal">
                                     <Button x:Name="CreateDiskButton" Content="＋ Create disk..." Click="CreateDiskButton_Click" Background="{StaticResource Accent}" Foreground="White" BorderThickness="0"/>
+                                    <Button x:Name="AddExistingDiskButton" Content="Add existing disk..." Click="AddExistingDiskButton_Click"/>
                                     <Button x:Name="OpenDiskFolderButton" Content="Open folder" Click="OpenDiskFolderButton_Click"/>
+                                    <!-- Un-registers only - never deletes the file (PR #7
+                                         feedback; see RemoveDiskButton_Click's own remarks). -->
                                     <Button x:Name="RemoveDiskButton" Content="Remove from list" Click="RemoveDiskButton_Click"/>
                                 </StackPanel>
                             </StackPanel>
                         </Border>
-                        <DataGrid x:Name="DiskList" Margin="0" SelectionChanged="DiskList_SelectionChanged" AutomationProperties.Name="Disk list">
+                        <DataGrid x:Name="DiskList" Margin="0" SelectionChanged="DiskList_SelectionChanged"
+                                  MouseDoubleClick="DiskList_MouseDoubleClick" AutomationProperties.Name="Disk list">
                             <DataGrid.Columns>
                                 <!-- Just the file name, not the full path -
                                      the full path is a tooltip on this cell
@@ -702,7 +717,13 @@
                                 <DataGridTextColumn Header="Format" Binding="{Binding Format}" Width="80"/>
                                 <DataGridTextColumn Header="Virtual size" Binding="{Binding VirtualSizeText}" Width="100"/>
                                 <DataGridTextColumn Header="Size on disk" Binding="{Binding ActualSizeText}" Width="100"/>
-                                <DataGridTextColumn Header="Used by" Binding="{Binding UsedByText}" Width="2*"/>
+                                <DataGridTextColumn Header="Used by" Binding="{Binding UsedByText}" Width="2*">
+                                    <DataGridTextColumn.ElementStyle>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="ToolTip" Value="{Binding UsedByText}"/>
+                                        </Style>
+                                    </DataGridTextColumn.ElementStyle>
+                                </DataGridTextColumn>
                                 <DataGridTextColumn Header="Exists" Binding="{Binding ExistsText}" Width="70"/>
                             </DataGrid.Columns>
                         </DataGrid>
@@ -716,9 +737,16 @@
                                 BorderBrush="{StaticResource CardBorder}" BorderThickness="0,0,0,1">
                             <TextBlock Text="Networking" FontSize="18" FontWeight="Bold"/>
                         </Border>
-                        <DataGrid x:Name="NetworkList" Margin="0" IsReadOnly="True" AutomationProperties.Name="Network list">
+                        <DataGrid x:Name="NetworkList" Margin="0" IsReadOnly="True"
+                                  MouseDoubleClick="NetworkList_MouseDoubleClick" AutomationProperties.Name="Network list">
                             <DataGrid.Columns>
-                                <DataGridTextColumn Header="Environment" Binding="{Binding EnvironmentName}" Width="2*"/>
+                                <DataGridTextColumn Header="Environment" Binding="{Binding EnvironmentName}" Width="2*">
+                                    <DataGridTextColumn.ElementStyle>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="ToolTip" Value="{Binding EnvironmentName}"/>
+                                        </Style>
+                                    </DataGridTextColumn.ElementStyle>
+                                </DataGridTextColumn>
                                 <DataGridTextColumn Header="Engine" Binding="{Binding EngineDisplayName}" Width="100"/>
                                 <DataGridTextColumn Header="Mode" Binding="{Binding Mode}" Width="80"/>
                                 <DataGridTextColumn Header="Guest address" Binding="{Binding GuestAddressText}" Width="120"/>
@@ -750,66 +778,61 @@
                                     Padding="8,3" Margin="0" FontSize="11"/>
                         </Grid>
                     </Border>
-                    <Grid x:Name="RecentTasksColumnHeader" DockPanel.Dock="Top" Background="{StaticResource CardBg}" Margin="0,0,0,1">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="2*"/>
-                            <ColumnDefinition Width="1.4*"/>
-                            <ColumnDefinition Width="0.9*"/>
-                            <ColumnDefinition Width="0.9*"/>
-                            <ColumnDefinition Width="1.6*"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Task" FontSize="10.5" FontWeight="Bold" Foreground="{StaticResource TextDim}" Padding="14,4"/>
-                        <TextBlock Grid.Column="1" Text="Target" FontSize="10.5" FontWeight="Bold" Foreground="{StaticResource TextDim}" Padding="0,4"/>
-                        <TextBlock Grid.Column="2" Text="Started" FontSize="10.5" FontWeight="Bold" Foreground="{StaticResource TextDim}" Padding="0,4"/>
-                        <TextBlock Grid.Column="3" Text="Completed" FontSize="10.5" FontWeight="Bold" Foreground="{StaticResource TextDim}" Padding="0,4"/>
-                        <TextBlock Grid.Column="4" Text="Result" FontSize="10.5" FontWeight="Bold" Foreground="{StaticResource TextDim}" Padding="0,4"/>
-                    </Grid>
-                    <!-- Phase 4: a real Task/Target/Started/Completed/Result
-                         row per item (MainWindow.xaml.cs's RefreshRecentTasks
-                         binds this straight to VmService.GetRecentTasks, a
-                         plain List<TaskRecord>) - not the single combined
-                         line this used to be. Result's own color flags
+                    <!-- A real DataGrid, not a ListBox with a separate
+                         hand-built header Grid (PR #7 feedback: that
+                         older shape had no way to resize a column, and
+                         nothing to remember a width between runs even
+                         if it did) - MainWindow.xaml.cs's
+                         RefreshRecentTasks binds this straight to
+                         VmService.GetRecentTasks, a plain
+                         List&lt;TaskRecord&gt;. Result's own color flags
                          Running (still in progress - Accent, matching the
                          same brush the rest of the app uses for "this is
                          live/in-flight") and Failed (ErrorText, same brush
                          Settings/VmEditWindow's own validation text already
                          uses for an error) - Succeeded is just the default
-                         foreground, nothing needs to draw attention to it. -->
-                    <ListBox x:Name="RecentTasksList" Background="Transparent" BorderThickness="0"
-                             Foreground="#F1F1F1" FontSize="11.5" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                             AutomationProperties.Name="Recent tasks">
-                        <ListBox.ItemTemplate>
-                            <DataTemplate>
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="2*"/>
-                                        <ColumnDefinition Width="1.4*"/>
-                                        <ColumnDefinition Width="0.9*"/>
-                                        <ColumnDefinition Width="0.9*"/>
-                                        <ColumnDefinition Width="1.6*"/>
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="{Binding Name}" Padding="14,3" TextTrimming="CharacterEllipsis"/>
-                                    <TextBlock Grid.Column="1" Text="{Binding Target}" Padding="0,3" TextTrimming="CharacterEllipsis"/>
-                                    <TextBlock Grid.Column="2" Text="{Binding Started, StringFormat='HH:mm:ss'}" Padding="0,3"/>
-                                    <TextBlock Grid.Column="3" Text="{Binding Completed, StringFormat='HH:mm:ss'}" Padding="0,3"/>
-                                    <TextBlock Grid.Column="4" Text="{Binding Result}" Padding="0,3" TextTrimming="CharacterEllipsis">
-                                        <TextBlock.Style>
-                                            <Style TargetType="TextBlock">
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding Status}" Value="Running">
-                                                        <Setter Property="Foreground" Value="{StaticResource Accent}"/>
-                                                    </DataTrigger>
-                                                    <DataTrigger Binding="{Binding Status}" Value="Failed">
-                                                        <Setter Property="Foreground" Value="{StaticResource ErrorText}"/>
-                                                    </DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </TextBlock.Style>
-                                    </TextBlock>
-                                </Grid>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
+                         foreground, nothing needs to draw attention to it.
+                         Each column's own ElementStyle sets a ToolTip with
+                         the full, untruncated text, and double-clicking a
+                         row opens RowDetailWindow with every field,
+                         selectable and copyable in full. -->
+                    <DataGrid x:Name="RecentTasksList" Margin="0" FontSize="11.5"
+                              MouseDoubleClick="RecentTasksList_MouseDoubleClick"
+                              AutomationProperties.Name="Recent tasks">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Task" Binding="{Binding Name}" Width="2*">
+                                <DataGridTextColumn.ElementStyle>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="ToolTip" Value="{Binding Name}"/>
+                                    </Style>
+                                </DataGridTextColumn.ElementStyle>
+                            </DataGridTextColumn>
+                            <DataGridTextColumn Header="Target" Binding="{Binding Target}" Width="1.4*">
+                                <DataGridTextColumn.ElementStyle>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="ToolTip" Value="{Binding Target}"/>
+                                    </Style>
+                                </DataGridTextColumn.ElementStyle>
+                            </DataGridTextColumn>
+                            <DataGridTextColumn Header="Started" Binding="{Binding Started, StringFormat='HH:mm:ss'}" Width="0.9*"/>
+                            <DataGridTextColumn Header="Completed" Binding="{Binding Completed, StringFormat='HH:mm:ss'}" Width="0.9*"/>
+                            <DataGridTextColumn Header="Result" Binding="{Binding Result}" Width="1.6*">
+                                <DataGridTextColumn.ElementStyle>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="ToolTip" Value="{Binding Result}"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Status}" Value="Running">
+                                                <Setter Property="Foreground" Value="{StaticResource Accent}"/>
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding Status}" Value="Failed">
+                                                <Setter Property="Foreground" Value="{StaticResource ErrorText}"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </DataGridTextColumn.ElementStyle>
+                            </DataGridTextColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
                 </DockPanel>
             </Border>
         </Grid>
