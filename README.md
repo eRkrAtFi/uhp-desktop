@@ -136,3 +136,5 @@ UHP Desktop crashed or misbehaved) the matching file from its own
 
 GPL-3.0 - see [`LICENSE`](LICENSE). Third-party components and their own
 licenses are listed in [`THIRD_PARTY.md`](THIRD_PARTY.md).
+
+<!-- CI speed test: docs-only change, see PR for fix/ci-speed verification -->
