@@ -43,8 +43,10 @@ request is opened.
    they choose to - that click is the approval. There is no separate
    approving review to request: a solo repo has no second person who
    could approve the author's own PR, so branch protection requires 0
-   approving reviews and relies on the green `build-and-test` check plus
-   the merge itself instead. Claude never merges a pull request it
+   approving reviews and relies on the green `ci-ok` check (a summary
+   job that always runs and passes once every other job either
+   succeeded or was cleanly skipped - see `.github/workflows/ci.yml`)
+   plus the merge itself instead. Claude never merges a pull request it
    opened, regardless of how green CI is.
 4. Only after that squash-merge has landed: tag the release (e.g.
    `vX.Y.Z`) and push the tag. Pushing a tag triggers
@@ -58,6 +60,18 @@ request is opened.
 pushes to `main` itself (i.e. after a merge) - not on every push to a
 working branch. Push a branch as often as you like without triggering a
 full CI run; open the pull request when you want CI to check it.
+
+## Documentation
+
+A pull request that changes functionality (not a pure refactor, test,
+or CI change) updates the root [`README.md`](README.md)'s own Status
+section - what works and what doesn't - in the same pull request, not
+as a separate follow-up; update a `CHANGELOG` the same way if one
+exists by the time you read this. A doc that describes a point-in-time
+state (an audit, a phase-by-phase build log) is not expected to be
+rewritten after the fact - add a dated note or a short "since then"
+correction instead, the same way `QemuManager/ARCHITECTURE_AUDIT.md`
+and the phase sections in `riscv-emu/README.md` already do.
 
 ## Screenshots and other images
 

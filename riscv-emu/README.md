@@ -51,11 +51,24 @@ device set - which is exactly why hobbyist "boot real Linux" emulators
 8. **virtio-net, via a user-mode NAT** (not TAP - see "Phase 9") - done.
    `ping` and `wget` both reach the real internet from the guest.
 
+9. **A real distro - Alpine Linux riscv64** (Phase 10) - done. `apk
+   update`/`apk add` reach the real Alpine mirrors through this
+   project's own NAT, on a persistent virtio-blk disk `poweroff` leaves
+   in a clean, re-bootable state.
+10. **Bare-metal ELF workload + a GDB Remote Serial Protocol stub**
+    (`--elf`, `--gdb`/`--gdb-wait`, `src/gdbstub.c`) - done, part of
+    [UHP's own roadmap item 3](../vision/VISION.md), not numbered as a
+    "Phase" here since it is driven from that separate roadmap; see
+    `vision/NEXT.md` for its own current status (`make gdb-test` skips
+    on CI - lldb crashes on GitHub's own Windows runner - but runs and
+    passes locally) and `QemuManager/README.md` for the UHP-side half
+    of it.
+
 This was a multi-session project; see "Phase 5, done", "Phase 6", "Phase
-7", "Phase 9", and "Where this stands" below for the full path there.
-What remains: nothing on the virtio-blk disk is filesystem-shaped beyond
-the minimal busybox root `boot_root.sh` boots, so a real general-purpose
-distro is further out.
+7", "Phase 9", "Phase 10", and "Where this stands" below for the full
+path there (the last of those predates Phase 9/10 and `--elf`/GDB - it
+describes an earlier point, not the current state; see this list
+above for that instead).
 
 ## Phase 1: what's implemented and how it's verified
 

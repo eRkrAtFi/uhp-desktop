@@ -23,10 +23,27 @@ repository (`riscv-emu/`, `QemuManager/`, `vision/`, `docs/`).
   a branch directly, and never tag/release before the merge has
   actually landed on `main`.
 - `main` is protected on GitHub (see repo Settings -> Branches): changes
-  only land through a pull request with a passing `build-and-test`
-  check; force-pushes and branch deletion are disabled. No approving
-  review count is required (there is no second reviewer to require it
-  from) - the merge button itself is the approval.
+  only land through a pull request with a passing `ci-ok` check (a
+  summary job that always runs and passes once every other job either
+  succeeded or was cleanly skipped - see `.github/workflows/ci.yml`);
+  force-pushes and branch deletion are disabled. No approving review
+  count is required (there is no second reviewer to require it from) -
+  the merge button itself is the approval.
+
+## Documentation
+
+- Every pull request that changes functionality (not a pure refactor,
+  test, or CI change) also updates the root [`README.md`](README.md)'s
+  own Status section - what works and what doesn't - in the same PR,
+  not as a separate follow-up. If a `CHANGELOG` file exists by the time
+  you read this, update it the same way, in the same PR.
+- A README/doc describing a point-in-time state (an audit, a phase-by-
+  phase build log) is not expected to be rewritten after the fact - add
+  a dated note or a short "since then" correction instead of editing
+  old prose, the same way `QemuManager/ARCHITECTURE_AUDIT.md` and the
+  phase sections in `riscv-emu/README.md` already do. The root
+  `README.md`'s own Status section is the one place that must always
+  describe the current state, not a historical one.
 
 ## Screenshots and other images
 
