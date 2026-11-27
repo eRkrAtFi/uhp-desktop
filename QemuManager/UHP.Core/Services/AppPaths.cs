@@ -38,6 +38,12 @@ public static class AppPaths
 
     public static string VmsDir { get; } = Path.Combine(AppDataDir, "vms");
 
+    /// <summary>Where "Create disk" (Storage page, Phase 6) suggests
+    /// putting a new disk image by default - Browse can always point
+    /// elsewhere instead, the same as every other file path field in
+    /// this app.</summary>
+    public static string DisksDir { get; } = Path.Combine(AppDataDir, "disks");
+
     /// <summary>Where EnvironmentStore.LoadAll backs up a VM config file's
     /// original, pre-migration bytes before overwriting it with the
     /// migrated EnvironmentConfig shape - one per config, same filename,
@@ -62,6 +68,7 @@ public static class AppPaths
     {
         Directory.CreateDirectory(VmsDir);
         Directory.CreateDirectory(RuntimeDir);
+        Directory.CreateDirectory(DisksDir);
     }
 
     private static string ResolveAppDataDir() => ResolveAppDataDir(

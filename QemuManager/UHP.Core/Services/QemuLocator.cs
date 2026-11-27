@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 
 namespace QemuManager.Services;
 
@@ -55,5 +56,20 @@ public static class QemuLocator
     {
         var path = Path.Combine(qemuDir, "qemu-img.exe");
         return File.Exists(path) ? path : null;
+    }
+
+    /// <summary>qemu-system-&lt;arch&gt; --version's own first line (e.g.
+    /// "QEMU emulator version 8.2.0") - the Engines page's own version
+    /// column (Phase 6). Queries whichever architecture ListArchitectures
+    /// would list first (x86_64 if present, since every architecture's
+    /// own qemu-system-*.exe build reports the same overall QEMU version
+    /// regardless of which one is asked); null if qemuDir has no
+    /// qemu-system-*.exe at all.</summary>
+    public static async Task<string?> GetVersionAsync(string qemuDir)
+    {
+        var archs = ListArchitectures(qemuDir);
+        if (archs.Count == 0) return null;
+        var binary = SystemBinaryFor(qemuDir, archs[0]);
+        return binary == null ? null : await ExternalVersionProbe.GetFirstLineAsync(binary);
     }
 }

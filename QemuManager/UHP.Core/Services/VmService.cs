@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -456,6 +458,190 @@ public class VmService : IVmService, IDisposable
         {
             Interlocked.Exchange(ref _polling, 0);
         }
+    }
+
+    // --- Phase 6: Host/Storage/Networking/Engines pages - see IVmService's
+    // own remarks on each. ---
+
+    private static string FormatBytes(long bytes) => $"{bytes / (1024.0 * 1024 * 1024):0.#} GB";
+
+    private static string FormatFreeDiskSpace()
+    {
+        try
+        {
+            AppPaths.EnsureDirectories();
+            var root = Path.GetPathRoot(AppPaths.AppDataDir);
+            return string.IsNullOrEmpty(root) ? "unknown" : FormatBytes(new DriveInfo(root).AvailableFreeSpace);
+        }
+        catch (Exception)
+        {
+            // A removable/mapped drive that disappeared, or a path
+            // DriveInfo otherwise cannot resolve - "unknown" is honest;
+            // this is not worth failing the whole Host page over.
+            return "unknown";
+        }
+    }
+
+    private static string NormalizePath(string path)
+    {
+        try { return Path.GetFullPath(path); } catch (Exception) { return path; }
+    }
+
+    public HostInfo GetHostInfo()
+    {
+        EnvironmentConfig[] snapshot;
+        lock (_configsLock) snapshot = _configs.ToArray();
+
+        var runningSnapshots = snapshot.Where(IsRunning).Select(GetSnapshot).ToList();
+
+        return new HostInfo(
+            RuntimeInformation.OSDescription,
+            // PROCESSOR_IDENTIFIER (e.g. "Intel64 Family 6 Model 151
+            // Stepping 2, GenuineIntel") is set by Windows itself for
+            // every process with no extra dependency or elevation needed
+            // - not the friendlier marketing name a Win32_Processor WMI
+            // query would give, but a real, truthful description all the
+            // same.
+            $"{Environment.GetEnvironmentVariable("PROCESSOR_IDENTIFIER") ?? "Unknown CPU"}, {Environment.ProcessorCount} logical processors",
+            // GC.GetGCMemoryInfo().TotalAvailableMemoryBytes is total
+            // installed physical RAM on a real machine (the standard
+            // .NET technique for this since no direct cross-platform
+            // "total RAM" API exists) - not this process's own usage.
+            FormatBytes(GC.GetGCMemoryInfo().TotalAvailableMemoryBytes),
+            FormatFreeDiskSpace(),
+            WhpxStatus.IsEnabled(),
+            runningSnapshots.Count,
+            snapshot.Length,
+            runningSnapshots.Sum(s => s.CpuPercent),
+            runningSnapshots.Sum(s => s.MemoryBytes));
+    }
+
+    public async Task<IReadOnlyList<EngineStatusInfo>> GetEngineStatusesAsync(AppSettings settings)
+    {
+        EnvironmentConfig[] snapshot;
+        lock (_configsLock) snapshot = _configs.ToArray();
+
+        var result = new List<EngineStatusInfo>();
+        foreach (var engine in _engines.All)
+        {
+            var info = await engine.GetInstallStatusAsync(settings);
+            var count = snapshot.Count(c => c.EngineId == engine.Id);
+            result.Add(info with { EnvironmentCount = count });
+        }
+        return result;
+    }
+
+    public async Task<IReadOnlyList<DiskInfo>> GetDiskInventoryAsync(AppSettings settings)
+    {
+        EnvironmentConfig[] snapshot;
+        lock (_configsLock) snapshot = _configs.ToArray();
+
+        // Every Environment's own disk, grouped by normalized path so two
+        // Environments that happen to point at the exact same file both
+        // show up under one DiskInfo's own UsedByEnvironmentNames, not as
+        // two separate rows for what is actually one file on disk.
+        var usedBy = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        var rawPathByNormalized = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        void Track(string rawPath, string? environmentName)
+        {
+            if (string.IsNullOrWhiteSpace(rawPath)) return;
+            var normalized = NormalizePath(rawPath);
+            if (!usedBy.TryGetValue(normalized, out var names)) usedBy[normalized] = names = new List<string>();
+            if (environmentName != null) names.Add(environmentName);
+            rawPathByNormalized[normalized] = rawPath;
+        }
+        foreach (var vm in snapshot) Track(vm.Workload.DiskPath, vm.Name);
+
+        // Anything else sitting in AppPaths.DisksDir - a disk created but
+        // never attached to anything yet, or one left behind after its
+        // own Environment was deleted - stays visible (and deletable)
+        // here, not silently invisible just because no Environment
+        // currently references it.
+        if (Directory.Exists(AppPaths.DisksDir))
+            foreach (var file in Directory.EnumerateFiles(AppPaths.DisksDir))
+                Track(file, null);
+
+        var result = new List<DiskInfo>();
+        foreach (var (normalized, rawPath) in rawPathByNormalized)
+        {
+            var exists = File.Exists(rawPath);
+            string? format = null;
+            long? virtualSize = null, actualSize = null;
+            if (exists && QemuLocator.LooksLikeQemuDir(settings.QemuDir))
+                (format, virtualSize, actualSize) = await DiskImageService.GetInfoAsync(settings.QemuDir, rawPath);
+
+            result.Add(new DiskInfo(rawPath, exists, format, virtualSize, actualSize, usedBy[normalized]));
+        }
+        return result.OrderBy(d => d.Path, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    // Both engines' default user-mode network is 10.0.2.0/24 - QEMU's own
+    // long-standing built-in default, and riscv-emu's net.c deliberately
+    // matches it (see its own NET_GUEST_IP/NET_GATEWAY_IP).
+    private const string NatGuestAddress = "10.0.2.15";
+    private const string NatGatewayAddress = "10.0.2.2";
+
+    public IReadOnlyList<NetworkInfo> GetNetworkInventory()
+    {
+        EnvironmentConfig[] snapshot;
+        lock (_configsLock) snapshot = _configs.ToArray();
+
+        return snapshot.Select(vm =>
+        {
+            // Platform.NetworkMode's own convention (see its remarks):
+            // "user" means NAT for either engine; anything else means no
+            // NIC at all, including for riscv-emu, which has no other
+            // backend choice of its own.
+            var isNat = string.Equals(vm.Platform.NetworkMode, "user", StringComparison.OrdinalIgnoreCase);
+            return new NetworkInfo(
+                vm.Name,
+                _engines.GetFor(vm).DisplayName,
+                isNat ? "NAT" : "none",
+                isNat ? NatGuestAddress : null,
+                isNat ? NatGatewayAddress : null);
+        }).ToList();
+    }
+
+    /// <summary>Synchronous under the hood (File.Delete, no engine or
+    /// qemu-img call involved) - Task-returning only because
+    /// IVmService.DeleteDiskFileAsync is, matching every other
+    /// potentially-slow action callers already await (Start/Shutdown/
+    /// GetDiskInventoryAsync itself), not because this one specifically
+    /// needs to run off the calling thread.</summary>
+    public Task<string> DeleteDiskFileAsync(string path)
+    {
+        var normalized = NormalizePath(path);
+
+        string? Blocked()
+        {
+            EnvironmentConfig[] snap;
+            lock (_configsLock) snap = _configs.ToArray();
+            var usedBy = snap.Where(c => string.Equals(NormalizePath(c.Workload.DiskPath ?? ""), normalized, StringComparison.OrdinalIgnoreCase))
+                              .Select(c => c.Name).ToList();
+            // Deliberately "used by any Environment at all", not "used by
+            // a *running* one" - a disk attached to a stopped Environment
+            // could be started at any moment, and there is no "Remove
+            // from list" meaning for a disk that is still somebody's own
+            // Workload.DiskPath either way.
+            return usedBy.Count > 0 ? $"Cannot delete: still used by {string.Join(", ", usedBy)}." : null;
+        }
+
+        var blocked = Blocked();
+        if (blocked != null) return Task.FromResult(blocked);
+
+        // Re-checked immediately before the actual delete, not only once
+        // up front - closes the window for a real race against another
+        // Save/StartAsync that attaches this exact disk to some
+        // Environment in between the caller's own "is this safe to
+        // offer" read (GetDiskInventoryAsync, well before the
+        // confirmation dialog the UI shows) and this call actually
+        // running.
+        blocked = Blocked();
+        if (blocked != null) return Task.FromResult(blocked);
+
+        var message = DiskImageService.DeleteFile(path);
+        RecordTask("Delete Disk", path, message.StartsWith("Deleted"), message);
+        return Task.FromResult(message);
     }
 
     public void Dispose() => _statsTimer.Dispose();

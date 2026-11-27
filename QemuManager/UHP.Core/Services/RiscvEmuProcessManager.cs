@@ -82,6 +82,20 @@ public class RiscvEmuProcessManager : IEngine
 
     public IReadOnlyList<string> ListArchitectures(AppSettings settings) => new[] { "riscv64" };
 
+    /// <summary>EnvironmentCount is always 0 here - VmService fills that
+    /// in itself afterward (see IEngine.GetInstallStatusAsync's own
+    /// remarks).</summary>
+    public async Task<EngineStatusInfo> GetInstallStatusAsync(AppSettings settings)
+    {
+        var archs = ListArchitectures(settings);
+        if (!RiscvEmuLocator.LooksLikeRiscvEmuDir(settings.RiscvEmuDir))
+            return new EngineStatusInfo(Id, DisplayName, settings.RiscvEmuDir, EngineStatus.NotFound, null, archs, 0);
+
+        var version = await RiscvEmuLocator.GetVersionAsync(settings.RiscvEmuDir);
+        var status = version == null ? EngineStatus.Error : EngineStatus.Found;
+        return new EngineStatusInfo(Id, DisplayName, settings.RiscvEmuDir, status, version, archs, 0);
+    }
+
     private static bool IsLinuxKernel(EnvironmentConfig e) => e.Workload.Kind == WorkloadKind.LinuxKernel;
     private static bool IsBareMetalElf(EnvironmentConfig e) => e.Workload.Kind == WorkloadKind.BareMetalElf;
 

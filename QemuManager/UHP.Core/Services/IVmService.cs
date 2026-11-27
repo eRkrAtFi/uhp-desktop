@@ -200,4 +200,43 @@ public interface IVmService : IConsoleSource
     /// it caches the latest and folds it into the next regular tick, so a
     /// subscriber marshaling onto a UI thread never gets flooded.</summary>
     event Action<string, VmStats>? StatsReceived;
+
+    // --- Phase 6: Host/Storage/Networking/Engines pages - UI only ever
+    // renders what these return; every fact behind them (host OS/CPU/RAM/
+    // disk, WHPX, qemu-img info, --version, which Environment uses which
+    // disk) is gathered here, not recomputed in XAML/code-behind. ---
+
+    /// <summary>Host machine facts, independent of any one Environment -
+    /// the Host page's data, including the running/total summary that
+    /// used to sit above the navigator tree. See HostInfo's own
+    /// remarks.</summary>
+    Models.HostInfo GetHostInfo();
+
+    /// <summary>Both registered engines' own install status (path,
+    /// found/not-found/error, version, architectures) - the Engines
+    /// page's data. EnvironmentCount is filled in here (the per-engine
+    /// count each IEngine.GetInstallStatusAsync itself leaves at 0 - see
+    /// its own remarks), from the same loaded list GetHostInfo uses. A
+    /// fresh read every call, not cached - this page's whole point is
+    /// "what is actually there right now."</summary>
+    Task<IReadOnlyList<Models.EngineStatusInfo>> GetEngineStatusesAsync(AppSettings settings);
+
+    /// <summary>Every disk image this app knows about - every
+    /// Environment's own Workload.DiskPath, plus anything else sitting in
+    /// AppPaths.DisksDir - the Storage page's data. Queries qemu-img info
+    /// for format/size when QEMU is available; Format/sizes are null
+    /// otherwise, not a wrong zero.</summary>
+    Task<IReadOnlyList<Models.DiskInfo>> GetDiskInventoryAsync(AppSettings settings);
+
+    /// <summary>Every Environment's own network configuration, read-only -
+    /// the Networking page's data (no port forwarding yet).</summary>
+    IReadOnlyList<Models.NetworkInfo> GetNetworkInventory();
+
+    /// <summary>Deletes a disk image file - refuses (returns a message,
+    /// deletes nothing) unless it is currently used by no Environment at
+    /// all, and separately refuses if, somehow, an Environment that does
+    /// reference this exact path is running right now - belt-and-
+    /// suspenders alongside the "used by no Environment" check itself,
+    /// not a substitute for the UI's own confirmation prompt.</summary>
+    Task<string> DeleteDiskFileAsync(string path);
 }

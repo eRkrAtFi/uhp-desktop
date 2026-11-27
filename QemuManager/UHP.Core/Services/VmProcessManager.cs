@@ -92,6 +92,21 @@ public class VmProcessManager : IEngine
 
     public IReadOnlyList<string> ListArchitectures(AppSettings settings) => QemuLocator.ListArchitectures(settings.QemuDir);
 
+    /// <summary>EnvironmentCount is always 0 here - VmService fills that
+    /// in itself afterward (see IEngine.GetInstallStatusAsync's own
+    /// remarks), since only it has the loaded Environment list this
+    /// engine itself never sees.</summary>
+    public async Task<EngineStatusInfo> GetInstallStatusAsync(AppSettings settings)
+    {
+        var archs = QemuLocator.ListArchitectures(settings.QemuDir);
+        if (archs.Count == 0)
+            return new EngineStatusInfo(Id, DisplayName, settings.QemuDir, EngineStatus.NotFound, null, archs, 0);
+
+        var version = await QemuLocator.GetVersionAsync(settings.QemuDir);
+        var status = version == null ? EngineStatus.Error : EngineStatus.Found;
+        return new EngineStatusInfo(Id, DisplayName, settings.QemuDir, status, version, archs, 0);
+    }
+
     /// <summary>Architectures QEMU ships with no default machine type at
     /// all (qemu-system-* simply refuses to start with none given) and
     /// the "virt" machine type is the usual choice for - what the old,

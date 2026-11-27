@@ -272,12 +272,6 @@ public partial class EnvironmentEditWindow : Window
         var row = new Grid();
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        // Only Workload.DiskPath, and only for an engine whose disk is a
-        // real qcow2 QEMU manages itself (DiskImageService.CreateQcow2Async
-        // shells out to qemu-img.exe) - riscv-emu's own disk is a plain
-        // raw image with nothing here to create it the same way.
-        var showNewButton = field.Key == "Workload.DiskPath" && _env.EngineId == "Qemu";
-        if (showNewButton) row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
         var box = new TextBox { Text = field.Get(_env)?.ToString() ?? "" };
         Grid.SetColumn(box, 0);
@@ -292,22 +286,25 @@ public partial class EnvironmentEditWindow : Window
         };
         row.Children.Add(browse);
 
-        if (showNewButton)
+        column.Children.Add(row);
+
+        // Phase 6: creating a new disk moved to the Storage page (see
+        // MainWindow.xaml's CreateDiskButton) - this field only points
+        // there now rather than owning its own second copy of that same
+        // CreateDiskWindow dialog. Only for Workload.DiskPath, and only
+        // for an engine whose disk is a real qcow2 QEMU manages itself -
+        // riscv-emu's own disk is a plain raw image with no "create"
+        // flow on either page.
+        if (field.Key == "Workload.DiskPath" && _env.EngineId == "Qemu")
         {
-            var newButton = new Button { Content = "New..." };
-            Grid.SetColumn(newButton, 2);
-            newButton.Click += (_, _) =>
+            var hint = new TextBlock
             {
-                var suggestedName = string.IsNullOrWhiteSpace(NameBox.Text) ? "disk" : NameBox.Text;
-                var suggestedPath = Path.Combine(AppPaths.AppDataDir, "disks", suggestedName + ".qcow2");
-                Directory.CreateDirectory(Path.GetDirectoryName(suggestedPath)!);
-                var dialog = new CreateDiskWindow(_settings.QemuDir, suggestedPath, _vmService) { Owner = this };
-                if (dialog.ShowDialog() == true) box.Text = dialog.CreatedPath;
+                Text = "To create a new disk, use the Storage page.",
+                FontSize = 11, Opacity = 0.7, Margin = new Thickness(0, 2, 0, 0),
             };
-            row.Children.Add(newButton);
+            column.Children.Add(hint);
         }
 
-        column.Children.Add(row);
         return (() => box.Text.Trim(), v => box.Text = v as string ?? "");
     }
 

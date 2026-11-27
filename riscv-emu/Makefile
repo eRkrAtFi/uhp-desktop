@@ -3,6 +3,17 @@
 # programs, since no GNU RISC-V cross toolchain is installed on this host.
 CC       ?= gcc
 CFLAGS   ?= -std=c99 -O2 -Wall -Wextra -Wpedantic
+# --version's own output (Engines page, Phase 6) - "v*" tag match and
+# "always"/"dirty" flags mirror QemuManager.csproj's own
+# SetVersionFromGitTag/SetSourceRevisionId targets exactly, since both
+# projects share one repo's tag history and must never pick up the
+# unrelated guest-images-v* tags that also exist in it. ContinueOnError
+# has no Makefile equivalent needed here - `|| echo unknown` already
+# covers a missing git/shallow clone/no tags yet the same way those MSBuild
+# targets' own ContinueOnError="true" does.
+GIT_VERSION := $(shell git describe --tags --match "v*" --always --dirty 2>/dev/null || echo unknown)
+GIT_COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+CFLAGS   += -DRISCV_EMU_VERSION=\"$(GIT_VERSION)\" -DRISCV_EMU_COMMIT=\"$(GIT_COMMIT)\"
 # Resolved through PATH, not a baked-in absolute path: a direct /c/...
 # path inside a recipe resolves inconsistently depending on what spawned
 # this make (w64devkit's sh translates it one way when make itself was

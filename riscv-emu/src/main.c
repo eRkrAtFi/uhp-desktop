@@ -15,6 +15,17 @@
 #include <string.h>
 #include <time.h>
 
+/* Set via -D from the Makefile's own git describe/rev-parse (see its
+ * comment) - these fallbacks only apply to a build invoked some other
+ * way (e.g. a raw gcc invocation outside make), not to anything CI or
+ * finish.ps1 ever actually produces. */
+#ifndef RISCV_EMU_VERSION
+#define RISCV_EMU_VERSION "unknown"
+#endif
+#ifndef RISCV_EMU_COMMIT
+#define RISCV_EMU_COMMIT "unknown"
+#endif
+
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
@@ -123,6 +134,7 @@ static void usage(const char *argv0)
         "   or: %s [options] --entry <addr> --load <addr> <file> [--load ...]\n"
         "   or: %s [options] --kernel <Image> [--initrd <f>] [--append <args>]\n"
         "\n"
+        "  --version          print version and commit, then exit\n"
         "  --trace            print one line per instruction to stderr\n"
         "  --max <n>          stop after n instructions (default 2000000000)\n"
         "  --deterministic-time  mtime advances once per instruction instead\n"
@@ -485,9 +497,20 @@ int main(int argc, char **argv)
      * to be known before the one calloc() that sizes guest RAM, but every
      * other option (notably --load) acts immediately as it's seen and so
      * needs m.mem already allocated - there is no ordering of a single
-     * pass that satisfies both. */
-    for (i = 1; i < argc; i++)
+     * pass that satisfies both. --version lives in this same early pass
+     * for a different reason: it must exit before m.mem is ever
+     * allocated (nothing to free), the same way QEMU's own
+     * qemu-system-* --version does no real setup first either - what
+     * UHP Desktop's Engines page shells out to and parses (stdout, not
+     * stderr, matching that same QEMU convention) must work even with
+     * no other arguments and nothing else on the command line valid. */
+    for (i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--mem") && i + 1 < argc) mem_size = strtoull(argv[++i], NULL, 0);
+        else if (!strcmp(argv[i], "--version")) {
+            printf("riscv-emu %s (commit %s)\n", RISCV_EMU_VERSION, RISCV_EMU_COMMIT);
+            return 0;
+        }
+    }
 
     /* stderr defaults to fully buffered (not line buffered) once it is
      * redirected to a file, so the progress line below would otherwise sit

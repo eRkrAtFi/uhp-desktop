@@ -1,5 +1,7 @@
 using System;
 using System.Diagnostics;
+using System.IO;
+using System.Text.Json;
 using System.Threading.Tasks;
 
 namespace QemuManager.Services;
@@ -8,6 +10,69 @@ namespace QemuManager.Services;
 /// virtual disks. This app never writes a disk image format itself.</summary>
 public static class DiskImageService
 {
+    /// <summary>qemu-img info --output=json's own format/virtual-size/
+    /// actual-size for one disk image - the Storage page's own per-disk
+    /// detail (Phase 6). Null fields (not an empty record) when qemu-img
+    /// itself is not available or path does not look like an image
+    /// qemu-img can read at all - the page shows "unknown" for those
+    /// rather than a wrong zero.</summary>
+    public static async Task<(string? Format, long? VirtualSizeBytes, long? ActualSizeBytes)> GetInfoAsync(string qemuDir, string path)
+    {
+        var binary = QemuLocator.ImgBinary(qemuDir);
+        if (binary == null || !File.Exists(path)) return (null, null, null);
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = binary,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        psi.ArgumentList.Add("info");
+        psi.ArgumentList.Add("--output=json");
+        psi.ArgumentList.Add(path);
+
+        try
+        {
+            using var process = Process.Start(psi);
+            if (process == null) return (null, null, null);
+            var stdout = await process.StandardOutput.ReadToEndAsync();
+            await process.WaitForExitAsync();
+            if (process.ExitCode != 0) return (null, null, null);
+
+            using var doc = JsonDocument.Parse(stdout);
+            var root = doc.RootElement;
+            string? format = root.TryGetProperty("format", out var f) ? f.GetString() : null;
+            long? virtualSize = root.TryGetProperty("virtual-size", out var v) ? v.GetInt64() : null;
+            long? actualSize = root.TryGetProperty("actual-size", out var a) ? a.GetInt64() : null;
+            return (format, virtualSize, actualSize);
+        }
+        catch (Exception)
+        {
+            return (null, null, null);
+        }
+    }
+
+    /// <summary>Deletes a disk image file from disk - only ever called for
+    /// one that Services.IVmService.GetDiskInventoryAsync already
+    /// reported as used by no Environment (see its own remarks); this
+    /// method itself has no opinion on that and will delete whatever
+    /// path it is given, so every caller must have already checked.</summary>
+    public static string DeleteFile(string path)
+    {
+        try
+        {
+            if (!File.Exists(path)) return $"{path} no longer exists.";
+            File.Delete(path);
+            return $"Deleted {path}.";
+        }
+        catch (Exception ex)
+        {
+            return $"Could not delete {path}: {ex.Message}";
+        }
+    }
+
     public static async Task<string> CreateQcow2Async(string qemuDir, string path, int sizeGB)
     {
         var binary = QemuLocator.ImgBinary(qemuDir);

@@ -1502,6 +1502,116 @@ Console.WriteLine("\n--- NoResize dialogs must not have a fixed Height (content 
     }
 }
 
+Console.WriteLine("\n--- Phase 6: Host page data gathering (IVmService.GetHostInfo) ---");
+{
+    IVmService hostInfoService = new VmService();
+    hostInfoService.LoadAll();
+    var host = hostInfoService.GetHostInfo();
+    Console.WriteLine($"OperatingSystem: {host.OperatingSystem}");
+    Console.WriteLine($"CpuDescription: {host.CpuDescription}");
+    Console.WriteLine($"MemoryDescription: {host.MemoryDescription}");
+    Console.WriteLine($"FreeDiskSpaceDescription: {host.FreeDiskSpaceDescription}");
+    Console.WriteLine($"WhpxEnabled: {host.WhpxEnabled} (host-dependent - not asserted either way)");
+    Console.WriteLine($"RunningEnvironments/TotalEnvironments: {host.RunningEnvironments}/{host.TotalEnvironments} (expected: 0 running - nothing started yet in this run)");
+    var reasonable = !string.IsNullOrWhiteSpace(host.OperatingSystem)
+                   && !string.IsNullOrWhiteSpace(host.CpuDescription)
+                   && host.MemoryDescription.EndsWith("GB")
+                   && host.RunningEnvironments == 0
+                   && host.TotalCpuPercent == 0 && host.TotalMemoryBytes == 0;
+    Console.WriteLine($"Every field looks like a real value, and nothing running yet reports zero totals: {reasonable} (expected: True)");
+}
+
+Console.WriteLine("\n--- Phase 6: Engines page data gathering (IVmService.GetEngineStatusesAsync) ---");
+{
+    IVmService enginesService = new VmService();
+    enginesService.LoadAll();
+    var envSettings = new AppSettings { QemuDir = qemuDir, RiscvEmuDir = riscvEmuDir };
+
+    // One real saved Environment per engine, specifically so
+    // EnvironmentCount below has something non-zero to actually prove it
+    // counts correctly, not just that it compiles to 0 for an empty list.
+    var qemuCountEnv = new EnvironmentConfig { EngineId = "Qemu", Name = "selftest-engine-count-qemu" };
+    var riscvCountEnv = new EnvironmentConfig { EngineId = "RiscvEmu", Name = "selftest-engine-count-riscv" };
+    enginesService.Save(qemuCountEnv);
+    enginesService.Save(riscvCountEnv);
+
+    var statuses = await enginesService.GetEngineStatusesAsync(envSettings);
+    Console.WriteLine($"Engines reported: {statuses.Count} (expected: 2 - Qemu and RiscvEmu)");
+    foreach (var status in statuses)
+    {
+        Console.WriteLine($"{status.EngineId}: Status={status.Status}, Path={status.Path}, Version={status.VersionText ?? "(none)"}, Architectures=[{string.Join(", ", status.SupportedArchitectures)}], EnvironmentCount={status.EnvironmentCount}");
+    }
+    var qemuStatus = statuses.FirstOrDefault(s => s.EngineId == "Qemu");
+    var riscvStatus = statuses.FirstOrDefault(s => s.EngineId == "RiscvEmu");
+    Console.WriteLine($"QEMU's own EnvironmentCount includes the Environment just saved for it: {qemuStatus?.EnvironmentCount >= 1} (expected: True)");
+    Console.WriteLine($"riscv-emu's own EnvironmentCount includes the Environment just saved for it: {riscvStatus?.EnvironmentCount >= 1} (expected: True)");
+    Console.WriteLine($"QEMU found at '{qemuDir}' reports Status == Found: {qemuStatus?.Status == EngineStatus.Found} (expected: {QemuLocator.LooksLikeQemuDir(qemuDir)})");
+    Console.WriteLine($"riscv-emu found at '{riscvEmuDir}' reports Status == Found: {riscvStatus?.Status == EngineStatus.Found} (expected: {RiscvEmuLocator.LooksLikeRiscvEmuDir(riscvEmuDir)})");
+
+    enginesService.Delete(qemuCountEnv);
+    enginesService.Delete(riscvCountEnv);
+}
+
+Console.WriteLine("\n--- Phase 6: Storage page data gathering (IVmService.GetDiskInventoryAsync/DeleteDiskFileAsync) ---");
+{
+    IVmService storageService = new VmService();
+    storageService.LoadAll();
+    var storageSettings = new AppSettings { QemuDir = qemuDir, RiscvEmuDir = riscvEmuDir };
+
+    // A real, referenced disk (so UsedByEnvironmentNames has something to
+    // actually report) and a real, unreferenced "orphan" disk sitting in
+    // AppPaths.DisksDir - exactly the two cases GetDiskInventoryAsync's
+    // own remarks describe, and the only two DeleteDiskFileAsync is
+    // supposed to tell apart.
+    Directory.CreateDirectory(AppPaths.DisksDir);
+    var referencedDiskPath = Path.Combine(AppPaths.DisksDir, "selftest-referenced.img");
+    var orphanDiskPath = Path.Combine(AppPaths.DisksDir, "selftest-orphan.img");
+    File.WriteAllBytes(referencedDiskPath, new byte[1024]);
+    File.WriteAllBytes(orphanDiskPath, new byte[1024]);
+
+    var diskEnv = new EnvironmentConfig { EngineId = "RiscvEmu", Name = "selftest-disk-owner", Workload = new Workload { DiskPath = referencedDiskPath } };
+    storageService.Save(diskEnv);
+
+    var disks = await storageService.GetDiskInventoryAsync(storageSettings);
+    var referenced = disks.FirstOrDefault(d => string.Equals(Path.GetFullPath(d.Path), Path.GetFullPath(referencedDiskPath), StringComparison.OrdinalIgnoreCase));
+    var orphan = disks.FirstOrDefault(d => string.Equals(Path.GetFullPath(d.Path), Path.GetFullPath(orphanDiskPath), StringComparison.OrdinalIgnoreCase));
+    Console.WriteLine($"Referenced disk found in inventory, Exists=True, UsedBy=[{string.Join(", ", referenced?.UsedByEnvironmentNames ?? new List<string>())}]: {referenced != null && referenced.Exists && referenced.UsedByEnvironmentNames.Contains(diskEnv.Name)} (expected: True)");
+    Console.WriteLine($"Orphan disk found in inventory with no Environment using it: {orphan != null && orphan.UsedByEnvironmentNames.Count == 0} (expected: True)");
+
+    var blockedDelete = await storageService.DeleteDiskFileAsync(referencedDiskPath);
+    Console.WriteLine($"Deleting the referenced disk is refused: {blockedDelete.StartsWith("Cannot delete")} (actual message: {blockedDelete})");
+    Console.WriteLine($"Referenced disk file still exists after the refused delete: {File.Exists(referencedDiskPath)} (expected: True)");
+
+    var allowedDelete = await storageService.DeleteDiskFileAsync(orphanDiskPath);
+    Console.WriteLine($"Deleting the orphan disk succeeds: {allowedDelete.StartsWith("Deleted")} (actual message: {allowedDelete})");
+    Console.WriteLine($"Orphan disk file no longer exists after deletion: {!File.Exists(orphanDiskPath)} (expected: True)");
+
+    storageService.Delete(diskEnv);
+    if (File.Exists(referencedDiskPath)) File.Delete(referencedDiskPath);
+}
+
+Console.WriteLine("\n--- Phase 6: Networking page data gathering (IVmService.GetNetworkInventory) ---");
+{
+    IVmService networkService = new VmService();
+    networkService.LoadAll();
+
+    var natEnv = new EnvironmentConfig { EngineId = "RiscvEmu", Name = "selftest-network-nat", Platform = new Platform { NetworkMode = "user" } };
+    var noneEnv = new EnvironmentConfig { EngineId = "Qemu", Name = "selftest-network-none", Platform = new Platform { NetworkMode = "none" } };
+    networkService.Save(natEnv);
+    networkService.Save(noneEnv);
+
+    var networks = networkService.GetNetworkInventory();
+    var nat = networks.FirstOrDefault(n => n.EnvironmentName == natEnv.Name);
+    var none = networks.FirstOrDefault(n => n.EnvironmentName == noneEnv.Name);
+    Console.WriteLine($"NAT Environment: Mode={nat?.Mode}, GuestAddress={nat?.GuestAddress}, GatewayAddress={nat?.GatewayAddress}");
+    Console.WriteLine($"none Environment: Mode={none?.Mode}, GuestAddress={none?.GuestAddress}, GatewayAddress={none?.GatewayAddress}");
+    Console.WriteLine($"NAT Environment reports the real 10.0.2.x NAT addresses (riscv-emu's own net.c): {nat?.Mode == "NAT" && nat.GuestAddress == "10.0.2.15" && nat.GatewayAddress == "10.0.2.2"} (expected: True)");
+    Console.WriteLine($"none Environment reports no addresses at all: {none?.Mode == "none" && none.GuestAddress == null && none.GatewayAddress == null} (expected: True)");
+
+    networkService.Delete(natEnv);
+    networkService.Delete(noneEnv);
+}
+
 Console.WriteLine("\n--- Version embedded in the built QemuManager.exe (SetSourceRevisionId target) ---");
 // Reads the .exe's own PE "Product Version" field directly
 // (System.Diagnostics.FileVersionInfo), the same field

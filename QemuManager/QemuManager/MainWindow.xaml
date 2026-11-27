@@ -525,22 +525,197 @@
                         </ScrollViewer>
                     </DockPanel>
 
-                    <StackPanel x:Name="HostPage" Visibility="Collapsed" Margin="32">
-                        <TextBlock Text="Host" FontSize="20" FontWeight="Bold" Margin="0,0,0,8"/>
-                        <TextBlock x:Name="HostSummaryText" Foreground="{StaticResource TextDim}"/>
-                        <TextBlock Text="This host's own OS/CPU/memory totals are not shown yet (see Phase 6)." Foreground="{StaticResource TextDim}" Margin="0,8,0,0"/>
-                    </StackPanel>
+                    <!-- Phase 6: host machine facts, independent of any one
+                         Environment - also where the running/total summary
+                         that used to sit above the navigator tree now
+                         lives (see MainWindow.xaml.cs's RefreshSummary). -->
+                    <ScrollViewer x:Name="HostPage" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="32">
+                            <TextBlock Text="Host" FontSize="20" FontWeight="Bold" Margin="0,0,0,8"/>
+                            <TextBlock x:Name="HostSummaryText" Foreground="{StaticResource TextDim}" Margin="0,0,0,16"/>
 
-                    <StackPanel x:Name="EnginesPage" Visibility="Collapsed" Margin="32">
-                        <TextBlock Text="Engines" FontSize="20" FontWeight="Bold" Margin="0,0,0,8"/>
-                        <TextBlock x:Name="EnginesInfoText" Foreground="{StaticResource TextDim}" TextWrapping="Wrap"/>
-                        <TextBlock Text="Changing these paths still happens in Settings for now - moving that here is Phase 6." Foreground="{StaticResource TextDim}" Margin="0,8,0,0"/>
-                    </StackPanel>
+                            <Border Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" Padding="16" Margin="0,0,0,20">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="160"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/> <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/> <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Operating system" Foreground="{StaticResource TextDim}" Margin="0,0,0,8"/>
+                                    <TextBlock x:Name="HostOsText" Grid.Row="0" Grid.Column="1" Margin="0,0,0,8" TextWrapping="Wrap"/>
+                                    <TextBlock Grid.Row="1" Grid.Column="0" Text="CPU" Foreground="{StaticResource TextDim}" Margin="0,0,0,8"/>
+                                    <TextBlock x:Name="HostCpuText" Grid.Row="1" Grid.Column="1" Margin="0,0,0,8"/>
+                                    <TextBlock Grid.Row="2" Grid.Column="0" Text="Memory" Foreground="{StaticResource TextDim}" Margin="0,0,0,8"/>
+                                    <TextBlock x:Name="HostMemoryText" Grid.Row="2" Grid.Column="1" Margin="0,0,0,8"/>
+                                    <TextBlock Grid.Row="3" Grid.Column="0" Text="Free disk space" Foreground="{StaticResource TextDim}" Margin="0,0,0,8"/>
+                                    <TextBlock x:Name="HostFreeDiskText" Grid.Row="3" Grid.Column="1" Margin="0,0,0,8"/>
+                                    <TextBlock Grid.Row="4" Grid.Column="0" Text="WHPX" Foreground="{StaticResource TextDim}"/>
+                                    <TextBlock x:Name="HostWhpxText" Grid.Row="4" Grid.Column="1"/>
+                                </Grid>
+                            </Border>
 
-                    <StackPanel x:Name="PlaceholderPage" Visibility="Collapsed" Margin="32">
-                        <TextBlock x:Name="PlaceholderTitle" FontSize="20" FontWeight="Bold" Margin="0,0,0,8"/>
-                        <TextBlock Text="This page is not built yet (see Phase 6 of the UI overhaul plan)." Foreground="{StaticResource TextDim}"/>
-                    </StackPanel>
+                            <TextBlock Text="Running Environments" FontSize="16" FontWeight="Bold" Margin="0,0,0,8"/>
+                            <Border Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" Padding="16">
+                                <StackPanel Orientation="Horizontal">
+                                    <Border Background="{StaticResource WindowBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" Padding="14,10" Margin="0,0,10,0" MinWidth="110">
+                                        <StackPanel>
+                                            <TextBlock Text="Running / Total" FontSize="11" Foreground="{StaticResource TextDim}"/>
+                                            <TextBlock x:Name="HostRunningCountText" FontSize="18" FontWeight="Bold"/>
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Background="{StaticResource WindowBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" Padding="14,10" Margin="0,0,10,0" MinWidth="110">
+                                        <StackPanel>
+                                            <TextBlock Text="Total Host CPU" FontSize="11" Foreground="{StaticResource TextDim}"/>
+                                            <TextBlock x:Name="HostTotalCpuText" FontSize="18" FontWeight="Bold"/>
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Background="{StaticResource WindowBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" Padding="14,10" MinWidth="110">
+                                        <StackPanel>
+                                            <TextBlock Text="Total Host Memory" FontSize="11" Foreground="{StaticResource TextDim}"/>
+                                            <TextBlock x:Name="HostTotalMemoryText" FontSize="18" FontWeight="Bold"/>
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <!-- Phase 6: both engines' own install status, with
+                         path-editing moved here from the old Settings
+                         dialog (see SettingsWindow.xaml's own remarks) -
+                         Browse (or typing + leaving the box) re-validates
+                         and re-saves immediately, rather than waiting for
+                         an OK button that no longer exists on this page. -->
+                    <ScrollViewer x:Name="EnginesPage" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="32">
+                            <TextBlock Text="Engines" FontSize="20" FontWeight="Bold" Margin="0,0,0,16"/>
+
+                            <Border Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" Padding="16" Margin="0,0,0,16">
+                                <StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                        <Ellipse x:Name="QemuStatusDot" Width="10" Height="10" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                        <TextBlock Text="QEMU" FontSize="16" FontWeight="Bold" VerticalAlignment="Center"/>
+                                        <TextBlock x:Name="QemuStatusText" Foreground="{StaticResource TextDim}" VerticalAlignment="Center" Margin="10,0,0,0"/>
+                                    </StackPanel>
+                                    <Grid Margin="0,0,0,8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBox x:Name="QemuDirBox" Grid.Column="0" LostFocus="QemuDirBox_LostFocus" AutomationProperties.Name="QEMU directory"/>
+                                        <Button x:Name="QemuBrowseButton" Grid.Column="1" Content="Browse..." Click="QemuBrowseButton_Click" AutomationProperties.Name="Browse QEMU directory"/>
+                                    </Grid>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="140"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/> <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/> <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Version" Foreground="{StaticResource TextDim}" Margin="0,0,0,6"/>
+                                        <TextBlock x:Name="QemuVersionText" Grid.Row="0" Grid.Column="1" Margin="0,0,0,6"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Architectures" Foreground="{StaticResource TextDim}" Margin="0,0,0,6"/>
+                                        <TextBlock x:Name="QemuArchitecturesText" Grid.Row="1" Grid.Column="1" Margin="0,0,0,6" TextWrapping="Wrap"/>
+                                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Environments" Foreground="{StaticResource TextDim}" Margin="0,0,0,6"/>
+                                        <TextBlock x:Name="QemuEnvironmentCountText" Grid.Row="2" Grid.Column="1" Margin="0,0,0,6"/>
+                                        <TextBlock Grid.Row="3" Grid.Column="0" Text="WHPX" Foreground="{StaticResource TextDim}"/>
+                                        <TextBlock x:Name="QemuWhpxText" Grid.Row="3" Grid.Column="1" TextWrapping="Wrap"/>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" Padding="16">
+                                <StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                        <Ellipse x:Name="RiscvEmuStatusDot" Width="10" Height="10" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                        <TextBlock Text="riscv-emu" FontSize="16" FontWeight="Bold" VerticalAlignment="Center"/>
+                                        <TextBlock x:Name="RiscvEmuStatusText" Foreground="{StaticResource TextDim}" VerticalAlignment="Center" Margin="10,0,0,0"/>
+                                    </StackPanel>
+                                    <Grid Margin="0,0,0,8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBox x:Name="RiscvEmuDirBox" Grid.Column="0" LostFocus="RiscvEmuDirBox_LostFocus" AutomationProperties.Name="riscv-emu directory"/>
+                                        <Button x:Name="RiscvEmuBrowseButton" Grid.Column="1" Content="Browse..." Click="RiscvEmuBrowseButton_Click" AutomationProperties.Name="Browse riscv-emu directory"/>
+                                    </Grid>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="140"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/> <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Version" Foreground="{StaticResource TextDim}" Margin="0,0,0,6"/>
+                                        <TextBlock x:Name="RiscvEmuVersionText" Grid.Row="0" Grid.Column="1" Margin="0,0,0,6"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Architectures" Foreground="{StaticResource TextDim}" Margin="0,0,0,6"/>
+                                        <TextBlock x:Name="RiscvEmuArchitecturesText" Grid.Row="1" Grid.Column="1" Margin="0,0,0,6"/>
+                                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Environments" Foreground="{StaticResource TextDim}"/>
+                                        <TextBlock x:Name="RiscvEmuEnvironmentCountText" Grid.Row="2" Grid.Column="1"/>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <!-- Phase 6: every disk image this app knows about -
+                         gathered from every Environment's own
+                         Workload.DiskPath plus AppPaths.DisksDir (see
+                         IVmService.GetDiskInventoryAsync). "Create disk"
+                         moved here from the editor (see
+                         EnvironmentEditWindow.xaml.cs's own remarks on its
+                         disk field) - the editor only points to this page
+                         now, it does not open its own copy of this dialog. -->
+                    <DockPanel x:Name="StorageDiskPage" Visibility="Collapsed">
+                        <Border DockPanel.Dock="Top" Background="{StaticResource PanelBg}" Padding="16,12"
+                                BorderBrush="{StaticResource CardBorder}" BorderThickness="0,0,0,1">
+                            <StackPanel>
+                                <TextBlock Text="Storage" FontSize="18" FontWeight="Bold" Margin="0,0,0,10"/>
+                                <StackPanel Orientation="Horizontal">
+                                    <Button x:Name="CreateDiskButton" Content="＋ Create disk..." Click="CreateDiskButton_Click" Background="{StaticResource Accent}" Foreground="White" BorderThickness="0"/>
+                                    <Button x:Name="OpenDiskFolderButton" Content="Open folder" Click="OpenDiskFolderButton_Click"/>
+                                    <Button x:Name="RemoveDiskButton" Content="Remove from list" Click="RemoveDiskButton_Click"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                        <DataGrid x:Name="DiskList" Margin="0" SelectionChanged="DiskList_SelectionChanged" AutomationProperties.Name="Disk list">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Path" Binding="{Binding Path}" Width="3*"/>
+                                <DataGridTextColumn Header="Format" Binding="{Binding Format}" Width="80"/>
+                                <DataGridTextColumn Header="Virtual size" Binding="{Binding VirtualSizeText}" Width="100"/>
+                                <DataGridTextColumn Header="Size on disk" Binding="{Binding ActualSizeText}" Width="100"/>
+                                <DataGridTextColumn Header="Used by" Binding="{Binding UsedByText}" Width="2*"/>
+                                <DataGridTextColumn Header="Exists" Binding="{Binding ExistsText}" Width="70"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </DockPanel>
+
+                    <!-- Phase 6: per-Environment network configuration,
+                         read-only - no port forwarding yet (see
+                         vision/NEXT.md). -->
+                    <DockPanel x:Name="NetworkingPage" Visibility="Collapsed">
+                        <Border DockPanel.Dock="Top" Background="{StaticResource PanelBg}" Padding="16,12"
+                                BorderBrush="{StaticResource CardBorder}" BorderThickness="0,0,0,1">
+                            <TextBlock Text="Networking" FontSize="18" FontWeight="Bold"/>
+                        </Border>
+                        <DataGrid x:Name="NetworkList" Margin="0" IsReadOnly="True" AutomationProperties.Name="Network list">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Environment" Binding="{Binding EnvironmentName}" Width="2*"/>
+                                <DataGridTextColumn Header="Engine" Binding="{Binding EngineDisplayName}" Width="100"/>
+                                <DataGridTextColumn Header="Mode" Binding="{Binding Mode}" Width="80"/>
+                                <DataGridTextColumn Header="Guest address" Binding="{Binding GuestAddressText}" Width="120"/>
+                                <DataGridTextColumn Header="Gateway" Binding="{Binding GatewayAddressText}" Width="120"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </DockPanel>
                 </Grid>
             </Grid>
 
