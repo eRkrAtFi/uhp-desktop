@@ -92,6 +92,11 @@ jobs:
       # needed; until then this is the single largest chunk of time a
       # cache hit removes from this job, choco's own installers downloading
       # and unpacking three real toolchains from scratch on every run.
+      # LLVM turned out to already be preinstalled on this runner image
+      # (confirmed directly: choco's own install log says "llvm v20.1.8
+      # already installed") - cached here anyway in case a future image
+      # stops shipping it, but it is not where a cache hit's own time
+      # savings actually come from; mingw's install is.
       - name: Cache build tools (gcc, LLVM, QEMU)
         id: tool-cache
         uses: actions/cache@v4
@@ -99,7 +104,7 @@ jobs:
           path: |
             C:\Program Files\qemu
             C:\Program Files\LLVM
-            C:\ProgramData\chocolatey\lib\mingw
+            C:\ProgramData\mingw64
           key: choco-tools-windows-v1
 
       - name: Install build tools (gcc, LLVM, QEMU)
@@ -107,25 +112,28 @@ jobs:
         run: choco install mingw llvm qemu -y --no-progress
         shell: pwsh
 
-      # Both of these are added explicitly and unconditionally - not
-      # left to whatever PATH side effect choco's own installers happen
-      # to produce - precisely so a cache HIT (no choco install step
-      # ever ran this time) still ends up with a working PATH. mingw's
-      # own gcc.exe is looked up rather than hardcoded: it lives several
-      # version-specific directories deep under chocolatey's own package
-      # layout, which is not this workflow's own concern to hardcode.
+      # All three added explicitly and unconditionally - not left to
+      # whatever PATH side effect choco's own installers happen to
+      # produce - precisely so a cache HIT (no choco install step ever
+      # ran this time) still ends up with a working PATH.
+      # C:\ProgramData\mingw64\mingw64\bin, not anywhere under
+      # chocolatey's own lib\mingw\ (that is only this package's
+      # download/staging area - confirmed directly from a real install
+      # log: "Testing path: C:\ProgramData\mingw64\mingw64\bin...Found!
+      # ... Adding...", i.e. the actual deployed toolchain, the same
+      # path choco's own installer itself adds to PATH, lives outside
+      # its own package directory entirely).
       - name: Add build tools to PATH
         shell: pwsh
         run: |
-          "C:\Program Files\qemu" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-          "C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-          $gcc = Get-ChildItem "C:\ProgramData\chocolatey\lib\mingw" -Recurse -Filter "gcc.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($gcc) {
-            $gcc.DirectoryName | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-          } else {
-            Write-Error "gcc.exe not found under C:\ProgramData\chocolatey\lib\mingw"
+          $mingwBin = "C:\ProgramData\mingw64\mingw64\bin"
+          if (-not (Test-Path (Join-Path $mingwBin "gcc.exe"))) {
+            Write-Error "gcc.exe not found at $mingwBin - mingw's own install layout may have changed"
             exit 1
           }
+          "C:\Program Files\qemu" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          "C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          $mingwBin | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
       - name: Build riscv-emu
         working-directory: riscv-emu
@@ -233,7 +241,7 @@ jobs:
           path: |
             C:\Program Files\qemu
             C:\Program Files\LLVM
-            C:\ProgramData\chocolatey\lib\mingw
+            C:\ProgramData\mingw64
           key: choco-tools-windows-v1
 
       - name: Install build tools (gcc, LLVM, QEMU)
@@ -244,15 +252,14 @@ jobs:
       - name: Add build tools to PATH
         shell: pwsh
         run: |
-          "C:\Program Files\qemu" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-          "C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-          $gcc = Get-ChildItem "C:\ProgramData\chocolatey\lib\mingw" -Recurse -Filter "gcc.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($gcc) {
-            $gcc.DirectoryName | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-          } else {
-            Write-Error "gcc.exe not found under C:\ProgramData\chocolatey\lib\mingw"
+          $mingwBin = "C:\ProgramData\mingw64\mingw64\bin"
+          if (-not (Test-Path (Join-Path $mingwBin "gcc.exe"))) {
+            Write-Error "gcc.exe not found at $mingwBin - mingw's own install layout may have changed"
             exit 1
           }
+          "C:\Program Files\qemu" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          "C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          $mingwBin | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
       - name: Build riscv-emu
         working-directory: riscv-emu
