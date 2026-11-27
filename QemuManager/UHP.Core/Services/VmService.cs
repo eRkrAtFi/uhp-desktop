@@ -1,9 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Win32;
 using QemuManager.Models;
 
 namespace QemuManager.Services;
@@ -22,6 +25,7 @@ public class VmService : IVmService, IDisposable
     private readonly EnvironmentStore _store = new();
     private readonly VmProcessManager _qemu = new();
     private readonly RiscvEmuProcessManager _riscv = new();
+    private readonly DiskRegistryStore _diskRegistry = new();
 
     // The one place a new engine gets registered (see
     // vision/VISION.md's roadmap item 5) - everything below looks an
@@ -279,6 +283,12 @@ public class VmService : IVmService, IDisposable
         var loaded = _store.LoadAll();
         foreach (var vm in loaded) TryReattach(vm);
         lock (_configsLock) { _configs.Clear(); _configs.AddRange(loaded); }
+        // One-time, no-op after the first real run - see
+        // DiskRegistryStore.MigrateIfNeeded's own remarks (PR #7
+        // feedback: a regression the registry itself introduced,
+        // disks already sitting in AppPaths.DisksDir before it existed
+        // otherwise simply vanished from the Storage page).
+        _diskRegistry.MigrateIfNeeded(loaded.Select(vm => vm.Workload.DiskPath));
         return loaded;
     }
 
@@ -456,6 +466,272 @@ public class VmService : IVmService, IDisposable
         {
             Interlocked.Exchange(ref _polling, 0);
         }
+    }
+
+    // --- Phase 6: Host/Storage/Networking/Engines pages - see IVmService's
+    // own remarks on each. ---
+
+    private static string FormatBytes(long bytes) => $"{bytes / (1024.0 * 1024 * 1024):0.#} GB";
+
+    private static string FormatFreeDiskSpace()
+    {
+        try
+        {
+            AppPaths.EnsureDirectories();
+            var root = Path.GetPathRoot(AppPaths.AppDataDir);
+            if (string.IsNullOrEmpty(root)) return "unknown";
+            var drive = new DriveInfo(root);
+            // DriveInfo.Name is "C:\" - the drive letter this free-space
+            // figure is actually about (PR #7 feedback), not just a bare
+            // number with no indication of which disk it is.
+            return $"{FormatBytes(drive.AvailableFreeSpace)} free on {drive.Name}";
+        }
+        catch (Exception)
+        {
+            // A removable/mapped drive that disappeared, or a path
+            // DriveInfo otherwise cannot resolve - "unknown" is honest;
+            // this is not worth failing the whole Host page over.
+            return "unknown";
+        }
+    }
+
+    private static string NormalizePath(string path)
+    {
+        try { return Path.GetFullPath(path); } catch (Exception) { return path; }
+    }
+
+    /// <summary>The real CPU model name (e.g. "AMD Ryzen 9 5900X 12-Core
+    /// Processor"), from the same registry value Windows' own System
+    /// Information/Task Manager read it from - PROCESSOR_IDENTIFIER (the
+    /// env var this used before PR #7 feedback) only ever gives the
+    /// family/model/stepping numbers, not this friendlier name.</summary>
+    private static string GetCpuDescription()
+    {
+        // This app only ever runs on Windows (RuntimeIdentifier win-x64,
+        // choco-installed Windows-only tools, WHPX) - CA1416 flags
+        // Registry.GetValue as "Windows-only" because this project's own
+        // TargetFramework is plain net8.0, not because there is any real
+        // cross-platform risk here to fix.
+#pragma warning disable CA1416
+        var name = Registry.GetValue(@"HKEY_LOCAL_MACHINE\HARDWARE\DESCRIPTION\System\CentralProcessor\0", "ProcessorNameString", null) as string;
+#pragma warning restore CA1416
+        return $"{(string.IsNullOrWhiteSpace(name) ? "Unknown CPU" : name.Trim())}, {Environment.ProcessorCount} logical processors";
+    }
+
+    /// <summary>"Windows 11 Pro (build 26300)" - edition from the
+    /// registry's own ProductName (e.g. "Windows 10 Pro"), but the
+    /// "Windows 10"/"Windows 11" part recomputed from the real build
+    /// number instead of trusted from that same string: an in-place
+    /// upgrade past build 22000 (where Windows 11 actually starts) can
+    /// leave ProductName still saying "Windows 10" even though the
+    /// running OS already is Windows 11 in every way that matters here.</summary>
+    private static string GetOsDescription()
+    {
+        var build = Environment.OSVersion.Version.Build;
+        var windowsName = build >= 22000 ? "Windows 11" : "Windows 10";
+#pragma warning disable CA1416 // this app only ever runs on Windows - see GetCpuDescription's own remarks
+        var productName = Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion", "ProductName", null) as string ?? "";
+#pragma warning restore CA1416
+        var edition = Regex.Replace(productName, @"^Windows (10|11)\s*", "").Trim();
+        return edition.Length > 0 ? $"{windowsName} {edition} (build {build})" : $"{windowsName} (build {build})";
+    }
+
+    public HostInfo GetHostInfo()
+    {
+        EnvironmentConfig[] snapshot;
+        lock (_configsLock) snapshot = _configs.ToArray();
+
+        var runningSnapshots = snapshot.Where(IsRunning).Select(GetSnapshot).ToList();
+
+        return new HostInfo(
+            GetOsDescription(),
+            GetCpuDescription(),
+            // GC.GetGCMemoryInfo().TotalAvailableMemoryBytes is total
+            // installed physical RAM on a real machine (the standard
+            // .NET technique for this since no direct cross-platform
+            // "total RAM" API exists) - not this process's own usage.
+            FormatBytes(GC.GetGCMemoryInfo().TotalAvailableMemoryBytes),
+            FormatFreeDiskSpace(),
+            WhpxStatus.IsEnabled(),
+            runningSnapshots.Count,
+            snapshot.Length,
+            runningSnapshots.Sum(s => s.CpuPercent),
+            runningSnapshots.Sum(s => s.MemoryBytes));
+    }
+
+    public async Task<IReadOnlyList<EngineStatusInfo>> GetEngineStatusesAsync(AppSettings settings)
+    {
+        EnvironmentConfig[] snapshot;
+        lock (_configsLock) snapshot = _configs.ToArray();
+
+        var result = new List<EngineStatusInfo>();
+        foreach (var engine in _engines.All)
+        {
+            var info = await engine.GetInstallStatusAsync(settings);
+            var count = snapshot.Count(c => c.EngineId == engine.Id);
+            result.Add(info with { EnvironmentCount = count });
+        }
+        return result;
+    }
+
+    public async Task<IReadOnlyList<DiskInfo>> GetDiskInventoryAsync(AppSettings settings)
+    {
+        EnvironmentConfig[] snapshot;
+        lock (_configsLock) snapshot = _configs.ToArray();
+
+        // Every Environment's own disk, grouped by normalized path so two
+        // Environments that happen to point at the exact same file both
+        // show up under one DiskInfo's own UsedByEnvironmentNames, not as
+        // two separate rows for what is actually one file on disk.
+        var usedBy = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        var rawPathByNormalized = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        void Track(string rawPath, string? environmentName)
+        {
+            if (string.IsNullOrWhiteSpace(rawPath)) return;
+            var normalized = NormalizePath(rawPath);
+            if (!usedBy.TryGetValue(normalized, out var names)) usedBy[normalized] = names = new List<string>();
+            if (environmentName != null) names.Add(environmentName);
+            rawPathByNormalized[normalized] = rawPath;
+        }
+        foreach (var vm in snapshot) Track(vm.Workload.DiskPath, vm.Name);
+
+        // Every disk ever created via "Create disk" or added via "Add
+        // existing disk" (_diskRegistry), regardless of where it
+        // actually lives - not a scan of AppPaths.DisksDir, which could
+        // never see a disk saved somewhere else and so silently lost
+        // track of it (no longer "removable from the list" at all) the
+        // moment its owning Environment was deleted. Stays visible here
+        // whether or not any Environment currently references it.
+        foreach (var path in _diskRegistry.LoadAll()) Track(path, null);
+
+        var result = new List<DiskInfo>();
+        foreach (var (normalized, rawPath) in rawPathByNormalized)
+        {
+            var exists = File.Exists(rawPath);
+            string? format = null;
+            long? virtualSize = null;
+            if (exists && QemuLocator.LooksLikeQemuDir(settings.QemuDir))
+                (format, virtualSize) = await DiskImageService.GetInfoAsync(settings.QemuDir, rawPath);
+
+            // Size on disk is always the real file size (PR #7 feedback),
+            // not qemu-img info's own "actual-size" - qemu-img is needed
+            // for Format/VirtualSizeBytes (this app does not parse qcow2
+            // itself), but "how many bytes does this file actually take"
+            // has one correct answer regardless of whether QEMU happens
+            // to be installed right now, and FileInfo.Length is always
+            // that answer directly, for any format.
+            long? actualSize = exists ? new FileInfo(rawPath).Length : null;
+
+            result.Add(new DiskInfo(rawPath, exists, format, virtualSize, actualSize, usedBy[normalized]));
+        }
+        return result.OrderBy(d => d.Path, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    // Both engines' NAT network is 10.0.2.0/24 - but with a different
+    // degree of certainty each (PR #7 feedback): riscv-emu's net.c
+    // hardcodes exactly these two addresses with no way to configure
+    // anything else, so they are simply fact for it. QEMU's own user-mode
+    // NAT only *defaults* to this network - it is QEMU's own long-
+    // standing built-in default, but a real QEMU command line could
+    // still override it (e.g. via Workload.ExtraArgs, which this app's
+    // UI never inspects for that), so "(default)" is appended there
+    // rather than stating it as a fact this app actually verified.
+    private const string NatGuestAddress = "10.0.2.15";
+    private const string NatGatewayAddress = "10.0.2.2";
+
+    public IReadOnlyList<NetworkInfo> GetNetworkInventory()
+    {
+        EnvironmentConfig[] snapshot;
+        lock (_configsLock) snapshot = _configs.ToArray();
+
+        return snapshot.Select(vm =>
+        {
+            // Platform.NetworkMode's own convention (see its remarks):
+            // "user" means NAT for either engine; anything else means no
+            // NIC at all, including for riscv-emu, which has no other
+            // backend choice of its own.
+            var isNat = string.Equals(vm.Platform.NetworkMode, "user", StringComparison.OrdinalIgnoreCase);
+            var isQemu = vm.EngineId == "Qemu";
+            var suffix = isNat && isQemu ? " (default)" : "";
+            return new NetworkInfo(
+                vm.Name,
+                _engines.GetFor(vm).DisplayName,
+                isNat ? "NAT" : "none",
+                isNat ? NatGuestAddress + suffix : null,
+                isNat ? NatGatewayAddress + suffix : null);
+        }).ToList();
+    }
+
+    /// <summary>Every Environment (by Name) whose Workload.DiskPath is
+    /// this exact file - empty if none. Deliberately "used at all", not
+    /// "used by a *running* one" - a disk attached to a stopped
+    /// Environment could be started at any moment. Used both by
+    /// RemoveDiskFromListAsync's own guard and by CreateDiskWindow's own
+    /// "can this existing file ever be overwritten" check.</summary>
+    public IReadOnlyList<string> GetEnvironmentsUsingDisk(string path)
+    {
+        var normalized = NormalizePath(path);
+        EnvironmentConfig[] snap;
+        lock (_configsLock) snap = _configs.ToArray();
+        return snap.Where(c => string.Equals(NormalizePath(c.Workload.DiskPath ?? ""), normalized, StringComparison.OrdinalIgnoreCase))
+                    .Select(c => c.Name).ToList();
+    }
+
+    /// <summary>Un-registers path from the disk registry - it never
+    /// touches the actual file (PR #7 feedback: an earlier version of
+    /// this deleted it, which is a far more dangerous default than this
+    /// page actually needs - "Open folder" is there for anyone who
+    /// genuinely wants to delete the file themselves). Synchronous under
+    /// the hood (plain JSON read/write, no engine or qemu-img call
+    /// involved) - Task-returning only because IVmService.
+    /// RemoveDiskFromListAsync is, matching every other potentially-slow
+    /// action callers already await.</summary>
+    public Task<string> RemoveDiskFromListAsync(string path)
+    {
+        string? Blocked()
+        {
+            var usedBy = GetEnvironmentsUsingDisk(path);
+            return usedBy.Count > 0 ? $"Cannot remove: still used by {string.Join(", ", usedBy)}." : null;
+        }
+
+        var blocked = Blocked();
+        if (blocked != null) return Task.FromResult(blocked);
+
+        // Re-checked immediately before the actual removal, not only
+        // once up front - closes the window for a real race against
+        // another Save/StartAsync that attaches this exact disk to some
+        // Environment in between the caller's own "is this safe to
+        // offer" read (GetDiskInventoryAsync, well before whatever the
+        // UI shows) and this call actually running.
+        blocked = Blocked();
+        if (blocked != null) return Task.FromResult(blocked);
+
+        _diskRegistry.Remove(path);
+        var message = $"Removed {path} from the list (file left untouched).";
+        RecordTask("Remove Disk", path, true, message);
+        return Task.FromResult(message);
+    }
+
+    /// <summary>Registers path in the disk registry - "Add existing
+    /// disk" (Storage page) calls this directly for a disk the user
+    /// already has; CreateDiskWindow also calls it right after a
+    /// successful create, so "every disk created via Create disk is
+    /// recorded regardless of location" holds without Create disk and
+    /// Add existing disk needing two different code paths to get there.
+    /// Refuses (returns a message, registers nothing) for a path that
+    /// does not actually exist - there is nothing real to track yet.</summary>
+    public Task<string> RegisterDiskAsync(string path)
+    {
+        if (!File.Exists(path))
+        {
+            var missing = $"{path} does not exist.";
+            RecordTask("Add Disk", path, false, missing);
+            return Task.FromResult(missing);
+        }
+        _diskRegistry.Add(path);
+        var message = $"Added {path} to the disk list.";
+        RecordTask("Add Disk", path, true, message);
+        return Task.FromResult(message);
     }
 
     public void Dispose() => _statsTimer.Dispose();

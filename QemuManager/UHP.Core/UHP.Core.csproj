@@ -20,4 +20,18 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- Microsoft.Win32.Registry - the Host/Engines pages' own CPU name
+         (HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\0\
+         ProcessorNameString) and OS edition (HKLM\SOFTWARE\Microsoft\
+         Windows NT\CurrentVersion\ProductName) reads (VmService's own
+         GetHostInfo) - this project's own TargetFramework is plain
+         net8.0, not net8.0-windows, so these Windows-only registry APIs
+         need this package explicitly to be part of the reference
+         surface (they are not WPF/System.Windows - the same "Windows-
+         specific is fine here, WPF-specific is not" line WhpxStatus's
+         own P/Invoke already draws). -->
+    <PackageReference Include="Microsoft.Win32.Registry" Version="5.0.0" />
+  </ItemGroup>
+
 </Project>

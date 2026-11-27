@@ -1502,6 +1502,342 @@ Console.WriteLine("\n--- NoResize dialogs must not have a fixed Height (content 
     }
 }
 
+Console.WriteLine("\n--- Phase 6: Host page data gathering (IVmService.GetHostInfo) ---");
+{
+    IVmService hostInfoService = new VmService();
+    hostInfoService.LoadAll();
+    var host = hostInfoService.GetHostInfo();
+    Console.WriteLine($"OperatingSystem: {host.OperatingSystem}");
+    Console.WriteLine($"CpuDescription: {host.CpuDescription}");
+    Console.WriteLine($"MemoryDescription: {host.MemoryDescription}");
+    Console.WriteLine($"FreeDiskSpaceDescription: {host.FreeDiskSpaceDescription}");
+    Console.WriteLine($"WhpxEnabled: {host.WhpxEnabled} (host-dependent - not asserted either way)");
+    Console.WriteLine($"RunningEnvironments/TotalEnvironments: {host.RunningEnvironments}/{host.TotalEnvironments} (expected: 0 running - nothing started yet in this run)");
+    var reasonable = !string.IsNullOrWhiteSpace(host.OperatingSystem)
+                   && !string.IsNullOrWhiteSpace(host.CpuDescription)
+                   && host.MemoryDescription.EndsWith("GB")
+                   && host.RunningEnvironments == 0
+                   && host.TotalCpuPercent == 0 && host.TotalMemoryBytes == 0;
+    Console.WriteLine($"Every field looks like a real value, and nothing running yet reports zero totals: {reasonable} (expected: True)");
+}
+
+Console.WriteLine("\n--- Phase 6: Engines page data gathering (IVmService.GetEngineStatusesAsync) ---");
+{
+    IVmService enginesService = new VmService();
+    enginesService.LoadAll();
+    var envSettings = new AppSettings { QemuDir = qemuDir, RiscvEmuDir = riscvEmuDir };
+
+    // One real saved Environment per engine, specifically so
+    // EnvironmentCount below has something non-zero to actually prove it
+    // counts correctly, not just that it compiles to 0 for an empty list.
+    var qemuCountEnv = new EnvironmentConfig { EngineId = "Qemu", Name = "selftest-engine-count-qemu" };
+    var riscvCountEnv = new EnvironmentConfig { EngineId = "RiscvEmu", Name = "selftest-engine-count-riscv" };
+    enginesService.Save(qemuCountEnv);
+    enginesService.Save(riscvCountEnv);
+
+    var statuses = await enginesService.GetEngineStatusesAsync(envSettings);
+    Console.WriteLine($"Engines reported: {statuses.Count} (expected: 2 - Qemu and RiscvEmu)");
+    foreach (var status in statuses)
+    {
+        Console.WriteLine($"{status.EngineId}: Status={status.Status}, Path={status.Path}, Version={status.VersionText ?? "(none)"}, Architectures=[{string.Join(", ", status.SupportedArchitectures)}], EnvironmentCount={status.EnvironmentCount}");
+    }
+    var qemuStatus = statuses.FirstOrDefault(s => s.EngineId == "Qemu");
+    var riscvStatus = statuses.FirstOrDefault(s => s.EngineId == "RiscvEmu");
+    Console.WriteLine($"QEMU's own EnvironmentCount includes the Environment just saved for it: {qemuStatus?.EnvironmentCount >= 1} (expected: True)");
+    Console.WriteLine($"riscv-emu's own EnvironmentCount includes the Environment just saved for it: {riscvStatus?.EnvironmentCount >= 1} (expected: True)");
+    Console.WriteLine($"QEMU found at '{qemuDir}' reports Status == Found: {qemuStatus?.Status == EngineStatus.Found} (expected: {QemuLocator.LooksLikeQemuDir(qemuDir)})");
+    Console.WriteLine($"riscv-emu found at '{riscvEmuDir}' reports Status == Found: {riscvStatus?.Status == EngineStatus.Found} (expected: {RiscvEmuLocator.LooksLikeRiscvEmuDir(riscvEmuDir)})");
+
+    enginesService.Delete(qemuCountEnv);
+    enginesService.Delete(riscvCountEnv);
+}
+
+Console.WriteLine("\n--- Phase 6/PR #7: Storage page data gathering (IVmService.GetDiskInventoryAsync, disk registry) ---");
+{
+    IVmService storageService = new VmService();
+    storageService.LoadAll();
+    var storageSettings = new AppSettings { QemuDir = qemuDir, RiscvEmuDir = riscvEmuDir };
+
+    // A real, referenced disk (so UsedByEnvironmentNames has something to
+    // actually report) and a real, registered-but-unreferenced disk -
+    // the registry (DiskRegistryStore), not a directory scan of
+    // AppPaths.DisksDir, is what makes the second one visible at all now
+    // (a bug: a disk saved anywhere else used to vanish from the list
+    // the moment nothing referenced it any more).
+    Directory.CreateDirectory(AppPaths.DisksDir);
+    var referencedDiskPath = Path.Combine(AppPaths.DisksDir, "selftest-referenced.img");
+    var registeredDiskPath = Path.Combine(AppPaths.DisksDir, "selftest-registered.img");
+    File.WriteAllBytes(referencedDiskPath, new byte[1024]);
+    File.WriteAllBytes(registeredDiskPath, new byte[1024]);
+
+    var diskEnv = new EnvironmentConfig { EngineId = "RiscvEmu", Name = "selftest-disk-owner", Workload = new Workload { DiskPath = referencedDiskPath } };
+    storageService.Save(diskEnv);
+    var registerMsg = await storageService.RegisterDiskAsync(registeredDiskPath);
+    Console.WriteLine($"RegisterDiskAsync (\"Add existing disk\"): {registerMsg}");
+
+    var disks = await storageService.GetDiskInventoryAsync(storageSettings);
+    var referenced = disks.FirstOrDefault(d => string.Equals(Path.GetFullPath(d.Path), Path.GetFullPath(referencedDiskPath), StringComparison.OrdinalIgnoreCase));
+    var registered = disks.FirstOrDefault(d => string.Equals(Path.GetFullPath(d.Path), Path.GetFullPath(registeredDiskPath), StringComparison.OrdinalIgnoreCase));
+    Console.WriteLine($"Referenced disk found in inventory, Exists=True, UsedBy=[{string.Join(", ", referenced?.UsedByEnvironmentNames ?? new List<string>())}]: {referenced != null && referenced.Exists && referenced.UsedByEnvironmentNames.Contains(diskEnv.Name)} (expected: True)");
+    Console.WriteLine($"Registered-but-unreferenced disk found in inventory with no Environment using it: {registered != null && registered.Exists && registered.UsedByEnvironmentNames.Count == 0} (expected: True)");
+
+    var blockedRemove = await storageService.RemoveDiskFromListAsync(referencedDiskPath);
+    Console.WriteLine($"Removing the referenced disk from the list is refused: {blockedRemove.StartsWith("Cannot remove")} (actual message: {blockedRemove})");
+
+    var allowedRemove = await storageService.RemoveDiskFromListAsync(registeredDiskPath);
+    Console.WriteLine($"Removing the registered-but-unreferenced disk from the list succeeds: {allowedRemove.StartsWith("Removed")} (actual message: {allowedRemove})");
+    // The critical difference from the old behavior: the file itself is
+    // left alone either way - "Remove from list" un-registers, it never
+    // deletes (PR #7 feedback).
+    Console.WriteLine($"Its file is left untouched (Remove from list never deletes): {File.Exists(registeredDiskPath)} (expected: True)");
+    var disksAfterRemove = await storageService.GetDiskInventoryAsync(storageSettings);
+    Console.WriteLine($"It no longer appears in the inventory now that it is un-registered and unreferenced: {!disksAfterRemove.Any(d => string.Equals(Path.GetFullPath(d.Path), Path.GetFullPath(registeredDiskPath), StringComparison.OrdinalIgnoreCase))} (expected: True)");
+
+    storageService.Delete(diskEnv);
+    File.Delete(referencedDiskPath);
+    File.Delete(registeredDiskPath);
+}
+
+Console.WriteLine("\n--- PR #7 feedback (regression fix, round 2): migration also runs for an existing version-less disks.json ---");
+{
+    // The actual gap in the first fix: an intermediate build already
+    // shipped disks.json as a bare JSON array with no Version field at
+    // all (someone who used "Create disk"/"Add existing disk" against
+    // that build), so "only migrate if the file does not exist yet"
+    // never ran for them - their own pre-existing AppPaths.DisksDir
+    // disks ("Debian small" etc.) stayed invisible forever, not just
+    // until the next real migration. Writes that exact legacy shape by
+    // hand (one real entry already in it, simulating something that
+    // build had already registered) and confirms MigrateIfNeeded still
+    // runs for it, keeping that entry and adding what was missing.
+    var registryPath = AppPaths.DiskRegistryFile;
+    Directory.CreateDirectory(AppPaths.DisksDir);
+
+    var alreadyRegisteredDisk = Path.Combine(AppPaths.DisksDir, "selftest-already-registered.img");
+    File.WriteAllBytes(alreadyRegisteredDisk, new byte[1024]);
+    File.WriteAllText(registryPath, System.Text.Json.JsonSerializer.Serialize(new[] { alreadyRegisteredDisk }));
+
+    var missingDisk = Path.Combine(AppPaths.DisksDir, "selftest-missing-from-legacy-registry.img");
+    File.WriteAllBytes(missingDisk, new byte[1024]);
+
+    var legacyMigrationRegistry = new DiskRegistryStore();
+    legacyMigrationRegistry.MigrateIfNeeded(Array.Empty<string>());
+
+    var afterLegacyMigration = legacyMigrationRegistry.LoadAll();
+    Console.WriteLine($"Entry already in the version-less disks.json survives migration: {afterLegacyMigration.Any(p => string.Equals(Path.GetFullPath(p), Path.GetFullPath(alreadyRegisteredDisk), StringComparison.OrdinalIgnoreCase))} (expected: True)");
+    Console.WriteLine($"The disk missing from that legacy registry (but sitting in AppPaths.DisksDir) gets added: {afterLegacyMigration.Any(p => string.Equals(Path.GetFullPath(p), Path.GetFullPath(missingDisk), StringComparison.OrdinalIgnoreCase))} (expected: True)");
+
+    // Stamped now - a later Remove must stick, not get silently
+    // re-added by some future MigrateIfNeeded call the way a version-
+    // less file could never actually prevent.
+    legacyMigrationRegistry.Remove(missingDisk);
+    legacyMigrationRegistry.MigrateIfNeeded(Array.Empty<string>());
+    var afterSecondLegacyCall = legacyMigrationRegistry.LoadAll();
+    Console.WriteLine($"After being explicitly removed, it does not come back on a later MigrateIfNeeded call: {!afterSecondLegacyCall.Any(p => string.Equals(Path.GetFullPath(p), Path.GetFullPath(missingDisk), StringComparison.OrdinalIgnoreCase))} (expected: True)");
+
+    File.Delete(alreadyRegisteredDisk);
+    File.Delete(missingDisk);
+    legacyMigrationRegistry.Remove(alreadyRegisteredDisk);
+}
+
+Console.WriteLine("\n--- PR #7 feedback (regression fix): disk registry migration seeds pre-existing AppPaths.DisksDir files + Environment disks ---");
+{
+    // Simulates "the registry file never existed yet at all" (e.g. an
+    // upgrade from before this feature shipped) - deletes it first,
+    // regardless of whatever earlier sections in this same run already
+    // registered, then calls MigrateIfNeeded directly with a
+    // controlled scenario: one disk already sitting in AppPaths.
+    // DisksDir (the actual regression report - "Debian small", "Debian
+    // test", etc. all vanished from Storage once the registry became
+    // the only source for "known but unreferenced"), and one disk an
+    // Environment references from somewhere else entirely.
+    var registryPath = AppPaths.DiskRegistryFile;
+    if (File.Exists(registryPath)) File.Delete(registryPath);
+
+    Directory.CreateDirectory(AppPaths.DisksDir);
+    var preExistingDisk = Path.Combine(AppPaths.DisksDir, "selftest-pre-existing.img");
+    File.WriteAllBytes(preExistingDisk, new byte[1024]);
+
+    var environmentOnlyDisk = Path.Combine(Path.GetTempPath(), "selftest-env-only-disk-" + Guid.NewGuid().ToString("N") + ".img");
+    File.WriteAllBytes(environmentOnlyDisk, new byte[1024]);
+
+    var migrationRegistry = new DiskRegistryStore();
+    migrationRegistry.MigrateIfNeeded(new[] { environmentOnlyDisk });
+
+    var afterMigration = migrationRegistry.LoadAll();
+    Console.WriteLine($"Pre-existing AppPaths.DisksDir file is in the registry after migration: {afterMigration.Any(p => string.Equals(Path.GetFullPath(p), Path.GetFullPath(preExistingDisk), StringComparison.OrdinalIgnoreCase))} (expected: True)");
+    Console.WriteLine($"Environment-only disk (outside DisksDir entirely) is in the registry too: {afterMigration.Any(p => string.Equals(Path.GetFullPath(p), Path.GetFullPath(environmentOnlyDisk), StringComparison.OrdinalIgnoreCase))} (expected: True)");
+
+    // Confirms this is genuinely a ONE-TIME migration, not something
+    // that keeps re-asserting the same files back on every later call -
+    // a real "Remove from list" afterward must stick.
+    migrationRegistry.Remove(preExistingDisk);
+    migrationRegistry.MigrateIfNeeded(new[] { environmentOnlyDisk });
+    var afterSecondCall = migrationRegistry.LoadAll();
+    Console.WriteLine($"MigrateIfNeeded does not re-add something already explicitly removed, on a later call (registry file already exists): {!afterSecondCall.Any(p => string.Equals(Path.GetFullPath(p), Path.GetFullPath(preExistingDisk), StringComparison.OrdinalIgnoreCase))} (expected: True)");
+
+    // End-to-end through the real facade: a fresh VmService (nothing of
+    // its own registered yet) still reports the pre-existing disk via
+    // GetDiskInventoryAsync, because LoadAll's own MigrateIfNeeded call
+    // already ran once for real, earlier in this very process (every
+    // IVmService instance shares the one AppPaths.DiskRegistryFile).
+    IVmService migrationFacade = new VmService();
+    migrationFacade.LoadAll();
+    var inventoryAfterMigration = await migrationFacade.GetDiskInventoryAsync(new AppSettings { QemuDir = qemuDir, RiscvEmuDir = riscvEmuDir });
+    Console.WriteLine($"GetDiskInventoryAsync reports the environment-only disk through the real facade: {inventoryAfterMigration.Any(d => string.Equals(Path.GetFullPath(d.Path), Path.GetFullPath(environmentOnlyDisk), StringComparison.OrdinalIgnoreCase))} (expected: True)");
+
+    migrationRegistry.Remove(environmentOnlyDisk);
+    File.Delete(preExistingDisk);
+    File.Delete(environmentOnlyDisk);
+}
+
+Console.WriteLine("\n--- PR #7 feedback (serious bug): Create disk must never silently overwrite an existing file ---");
+{
+    IVmService overwriteService = new VmService();
+    overwriteService.LoadAll();
+
+    // The actual bug report: a 64 MB disk, then a 1 GB qcow2 disk, with
+    // the SAME default suggested path - qemu-img create has no
+    // "already exists" guard of its own at all, so the second call
+    // silently truncated the first disk to the new size with no warning
+    // whatsoever. Reproduced here directly, bypassing SuggestUniquePath
+    // on purpose (that only fixes the *default* path; CreateAsync's own
+    // refusal has to hold even if two calls somehow target the exact
+    // same path anyway).
+    var sharedPath = Path.Combine(AppPaths.DisksDir, "selftest-overwrite-guard.img");
+    if (File.Exists(sharedPath)) File.Delete(sharedPath);
+
+    var first = DiskImageService.CreateRaw(sharedPath, 64L * 1024 * 1024);
+    Console.WriteLine($"First CreateRaw (64 MB): {first}");
+    var firstSize = new FileInfo(sharedPath).Length;
+    Console.WriteLine($"First file is 64 MB: {firstSize == 64L * 1024 * 1024} (actual: {firstSize})");
+
+    var second = DiskImageService.CreateRaw(sharedPath, 1L * 1024 * 1024 * 1024);
+    Console.WriteLine($"Second CreateRaw (1 GB, same path, overwrite not requested) is refused: {second.Contains("already exists")} (actual message: {second})");
+    var sizeAfterRefusedCreate = new FileInfo(sharedPath).Length;
+    Console.WriteLine($"File is still exactly the original 64 MB - NOT silently truncated to 1 GB: {sizeAfterRefusedCreate == firstSize} (expected: True, actual: {sizeAfterRefusedCreate})");
+
+    // Same guard on the qcow2 path (CreateQcow2Async/CreateAsync), and
+    // on CreateAsync's own single entry point explicitly.
+    var secondViaCreateAsync = await DiskImageService.CreateAsync(qemuDir, sharedPath, 1L * 1024 * 1024 * 1024, "raw");
+    Console.WriteLine($"CreateAsync (same path, overwrite not requested) is also refused: {secondViaCreateAsync.Contains("already exists")} (actual message: {secondViaCreateAsync})");
+    Console.WriteLine($"File is still untouched: {new FileInfo(sharedPath).Length == firstSize} (expected: True)");
+
+    // overwrite=true is still honored - this is a deliberate choice, not
+    // a silent accident, and only ever reachable in the UI after the
+    // caller has already confirmed the disk is used by no Environment.
+    var overwritten = DiskImageService.CreateRaw(sharedPath, 2L * 1024 * 1024, overwrite: true);
+    Console.WriteLine($"Explicit overwrite=true succeeds: {overwritten.StartsWith("Created")} (actual message: {overwritten})");
+    Console.WriteLine($"File is now the new 2 MB size: {new FileInfo(sharedPath).Length == 2L * 1024 * 1024} (expected: True, actual: {new FileInfo(sharedPath).Length})");
+
+    // GetEnvironmentsUsingDisk is what the real UI (CreateDiskWindow)
+    // checks before ever offering that overwrite confirmation at all -
+    // confirm a disk actually in use by an Environment reports it.
+    var usedEnv = new EnvironmentConfig { EngineId = "RiscvEmu", Name = "selftest-overwrite-owner", Workload = new Workload { DiskPath = sharedPath } };
+    overwriteService.Save(usedEnv);
+    var usedBy = overwriteService.GetEnvironmentsUsingDisk(sharedPath);
+    Console.WriteLine($"GetEnvironmentsUsingDisk reports the owning Environment, so the UI never even offers to overwrite it: {usedBy.Contains(usedEnv.Name)} (expected: True)");
+    overwriteService.Delete(usedEnv);
+
+    File.Delete(sharedPath);
+}
+
+Console.WriteLine("\n--- PR #7 feedback: SuggestUniquePath never suggests an already-taken default name ---");
+{
+    var dir = Path.Combine(Path.GetTempPath(), "selftest-suggest-unique-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(dir);
+    try
+    {
+        var first = DiskImageService.SuggestUniquePath(dir, "disk", ".qcow2");
+        Console.WriteLine($"First suggestion with an empty directory: {first} (expected to end with 'disk.qcow2')");
+        File.WriteAllBytes(first, new byte[1]);
+
+        var second = DiskImageService.SuggestUniquePath(dir, "disk", ".qcow2");
+        Console.WriteLine($"Second suggestion, after the first name is taken: {second} (expected to end with 'disk-2.qcow2')");
+        Console.WriteLine($"  Different from the first: {second != first} (expected: True)");
+        File.WriteAllBytes(second, new byte[1]);
+
+        var third = DiskImageService.SuggestUniquePath(dir, "disk", ".qcow2");
+        Console.WriteLine($"Third suggestion, after disk.qcow2 AND disk-2.qcow2 are both taken: {third} (expected to end with 'disk-3.qcow2')");
+    }
+    finally
+    {
+        Directory.Delete(dir, recursive: true);
+    }
+}
+
+Console.WriteLine("\n--- PR #7 feedback: riscv-emu's own Workload.DiskPath rejects a qcow2 image BY CONTENT, not extension (DiskImageService.LooksLikeQcow2 / RiscvEmuProcessManager's schema) ---");
+{
+    var scratchDir = Path.Combine(Path.GetTempPath(), "selftest-qcow2-content-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(scratchDir);
+    try
+    {
+        // qcow2's real 4-byte magic ("QFI\xFB") written directly, with no
+        // qemu-img involved at all - and deliberately in a file named
+        // *.img, the opposite extension, to prove this is genuinely
+        // content-based and not secretly still keyed on the name.
+        var misnamedQcow2 = Path.Combine(scratchDir, "looks-like-raw.img");
+        File.WriteAllBytes(misnamedQcow2, new byte[] { 0x51, 0x46, 0x49, 0xFB, 0, 0, 0, 0 });
+        Console.WriteLine($"A real qcow2 header saved as *.img is still detected: {DiskImageService.LooksLikeQcow2(misnamedQcow2)} (expected: True)");
+
+        // The reverse: a file actually named *.qcow2 but with plain raw
+        // content (no magic) must NOT be flagged - the old extension-only
+        // heuristic would have gotten this backwards too.
+        var misnamedRaw = Path.Combine(scratchDir, "looks-like-qcow2.qcow2");
+        File.WriteAllBytes(misnamedRaw, new byte[] { 0, 0, 0, 0, 0, 0, 0, 0 });
+        Console.WriteLine($"A plain raw file saved as *.qcow2 is NOT flagged as qcow2: {!DiskImageService.LooksLikeQcow2(misnamedRaw)} (expected: True)");
+
+        Console.WriteLine($"A path that does not exist yet is not flagged either (nothing to sniff): {!DiskImageService.LooksLikeQcow2(Path.Combine(scratchDir, "does-not-exist.qcow2"))} (expected: True)");
+
+        IVmService validationService = new VmService();
+        var riscvField = validationService.GetConfigSchema("RiscvEmu").First(f => f.Key == "Workload.DiskPath");
+        Console.WriteLine($"riscv-emu Workload.DiskPath rejects the real (misnamed) qcow2 file: {riscvField.Validate?.Invoke(misnamedQcow2) != null} (expected: True)");
+        Console.WriteLine($"riscv-emu Workload.DiskPath accepts the real (misnamed) raw file: {riscvField.Validate?.Invoke(misnamedRaw) == null} (expected: True)");
+        Console.WriteLine($"riscv-emu Workload.DiskPath accepts an empty path (no disk attached): {riscvField.Validate?.Invoke("") == null} (expected: True)");
+
+        var qemuField = validationService.GetConfigSchema("Qemu").First(f => f.Key == "Workload.DiskPath");
+        Console.WriteLine($"QEMU's own Workload.DiskPath has no such restriction (qcow2 is its normal format): {qemuField.Validate?.Invoke(misnamedQcow2) == null} (expected: True)");
+
+        // The same schema object is handed back for an Environment that
+        // was already saved and just loaded again, not only for a
+        // freshly drafted one - EnvironmentEditWindow's own Validate
+        // pass (OkButton_Click) runs identically either way, so an
+        // *existing* riscv-emu Environment somehow pointed at a qcow2
+        // file is caught the next time it is opened and saved, the same
+        // as a brand-new one would be.
+        var existingRiscvEnv = new EnvironmentConfig { EngineId = "RiscvEmu", Name = "selftest-existing-riscv", Workload = new Workload { DiskPath = misnamedQcow2 } };
+        var existingJson = System.Text.Json.JsonSerializer.Serialize(existingRiscvEnv);
+        var reloadedRiscvEnv = System.Text.Json.JsonSerializer.Deserialize<EnvironmentConfig>(existingJson)!;
+        Console.WriteLine($"An already-saved-and-reloaded riscv-emu Environment with a qcow2 DiskPath still fails the same Validate: {riscvField.Validate?.Invoke(reloadedRiscvEnv.Workload.DiskPath) != null} (expected: True)");
+    }
+    finally
+    {
+        Directory.Delete(scratchDir, recursive: true);
+    }
+}
+
+Console.WriteLine("\n--- Phase 6: Networking page data gathering (IVmService.GetNetworkInventory) ---");
+{
+    IVmService networkService = new VmService();
+    networkService.LoadAll();
+
+    var natEnv = new EnvironmentConfig { EngineId = "RiscvEmu", Name = "selftest-network-nat", Platform = new Platform { NetworkMode = "user" } };
+    var noneEnv = new EnvironmentConfig { EngineId = "Qemu", Name = "selftest-network-none", Platform = new Platform { NetworkMode = "none" } };
+    networkService.Save(natEnv);
+    networkService.Save(noneEnv);
+
+    var networks = networkService.GetNetworkInventory();
+    var nat = networks.FirstOrDefault(n => n.EnvironmentName == natEnv.Name);
+    var none = networks.FirstOrDefault(n => n.EnvironmentName == noneEnv.Name);
+    Console.WriteLine($"NAT Environment: Mode={nat?.Mode}, GuestAddress={nat?.GuestAddress}, GatewayAddress={nat?.GatewayAddress}");
+    Console.WriteLine($"none Environment: Mode={none?.Mode}, GuestAddress={none?.GuestAddress}, GatewayAddress={none?.GatewayAddress}");
+    Console.WriteLine($"NAT Environment reports the real 10.0.2.x NAT addresses (riscv-emu's own net.c): {nat?.Mode == "NAT" && nat.GuestAddress == "10.0.2.15" && nat.GatewayAddress == "10.0.2.2"} (expected: True)");
+    Console.WriteLine($"none Environment reports no addresses at all: {none?.Mode == "none" && none.GuestAddress == null && none.GatewayAddress == null} (expected: True)");
+
+    networkService.Delete(natEnv);
+    networkService.Delete(noneEnv);
+}
+
 Console.WriteLine("\n--- Version embedded in the built QemuManager.exe (SetSourceRevisionId target) ---");
 // Reads the .exe's own PE "Product Version" field directly
 // (System.Diagnostics.FileVersionInfo), the same field

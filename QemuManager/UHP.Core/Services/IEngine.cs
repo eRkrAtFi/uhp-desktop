@@ -115,4 +115,13 @@ public interface IEngine : IConsoleSource
     /// listening on (Debug.GdbEnabled), or null if that was not set, the
     /// engine does not support it, or it is not running at all.</summary>
     string? GetGdbEndpoint(string vmId);
+
+    /// <summary>This engine's own install status - path, found/not-found/
+    /// error, version, architectures - the Engines page's own status
+    /// column (Phase 6). Each engine knows which AppSettings field and
+    /// which Locator class is its own; VmService.GetEngineStatusesAsync
+    /// just loops over EngineRegistry.All and fills in EnvironmentCount
+    /// afterward (not known here - see its own remarks), rather than
+    /// branching on EngineId itself to pick a settings field/Locator.</summary>
+    Task<EngineStatusInfo> GetInstallStatusAsync(AppSettings settings);
 }

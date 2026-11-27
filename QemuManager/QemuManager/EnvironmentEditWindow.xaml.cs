@@ -272,11 +272,15 @@ public partial class EnvironmentEditWindow : Window
         var row = new Grid();
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        // Only Workload.DiskPath, and only for an engine whose disk is a
-        // real qcow2 QEMU manages itself (DiskImageService.CreateQcow2Async
-        // shells out to qemu-img.exe) - riscv-emu's own disk is a plain
-        // raw image with nothing here to create it the same way.
-        var showNewButton = field.Key == "Workload.DiskPath" && _env.EngineId == "Qemu";
+        // Workload.DiskPath only - the same shared CreateDiskWindow the
+        // Storage page's own "Create disk" button opens (PR #7
+        // feedback: this field only ever *references* that one dialog,
+        // it does not own a second implementation of it), just with its
+        // own default format already picked for this Environment's
+        // engine - "raw" for riscv-emu (its only real option - see
+        // RiscvEmuProcessManager's own Workload.DiskPath validation),
+        // "qcow2" for QEMU.
+        var showNewButton = field.Key == "Workload.DiskPath";
         if (showNewButton) row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
         var box = new TextBox { Text = field.Get(_env)?.ToString() ?? "" };
@@ -299,9 +303,10 @@ public partial class EnvironmentEditWindow : Window
             newButton.Click += (_, _) =>
             {
                 var suggestedName = string.IsNullOrWhiteSpace(NameBox.Text) ? "disk" : NameBox.Text;
-                var suggestedPath = Path.Combine(AppPaths.AppDataDir, "disks", suggestedName + ".qcow2");
-                Directory.CreateDirectory(Path.GetDirectoryName(suggestedPath)!);
-                var dialog = new CreateDiskWindow(_settings.QemuDir, suggestedPath, _vmService) { Owner = this };
+                var defaultFormat = _env.EngineId == "RiscvEmu" ? "raw" : "qcow2";
+                var suggestedPath = Path.Combine(AppPaths.DisksDir, suggestedName + (defaultFormat == "raw" ? ".img" : ".qcow2"));
+                Directory.CreateDirectory(AppPaths.DisksDir);
+                var dialog = new CreateDiskWindow(_settings.QemuDir, suggestedPath, _vmService, defaultFormat) { Owner = this };
                 if (dialog.ShowDialog() == true) box.Text = dialog.CreatedPath;
             };
             row.Children.Add(newButton);

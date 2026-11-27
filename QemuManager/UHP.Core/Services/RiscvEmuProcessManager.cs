@@ -82,6 +82,20 @@ public class RiscvEmuProcessManager : IEngine
 
     public IReadOnlyList<string> ListArchitectures(AppSettings settings) => new[] { "riscv64" };
 
+    /// <summary>EnvironmentCount is always 0 here - VmService fills that
+    /// in itself afterward (see IEngine.GetInstallStatusAsync's own
+    /// remarks).</summary>
+    public async Task<EngineStatusInfo> GetInstallStatusAsync(AppSettings settings)
+    {
+        var archs = ListArchitectures(settings);
+        if (!RiscvEmuLocator.LooksLikeRiscvEmuDir(settings.RiscvEmuDir))
+            return new EngineStatusInfo(Id, DisplayName, settings.RiscvEmuDir, EngineStatus.NotFound, null, archs, 0);
+
+        var version = await RiscvEmuLocator.GetVersionAsync(settings.RiscvEmuDir);
+        var status = version == null ? EngineStatus.Error : EngineStatus.Found;
+        return new EngineStatusInfo(Id, DisplayName, settings.RiscvEmuDir, status, version, archs, 0);
+    }
+
     private static bool IsLinuxKernel(EnvironmentConfig e) => e.Workload.Kind == WorkloadKind.LinuxKernel;
     private static bool IsBareMetalElf(EnvironmentConfig e) => e.Workload.Kind == WorkloadKind.BareMetalElf;
 
@@ -102,7 +116,18 @@ public class RiscvEmuProcessManager : IEngine
             VisibleWhen = IsLinuxKernel },
         new() { Key = "Workload.DiskPath", Label = "Disk image", Type = FieldType.FilePath, Group = "Workload",
             Get = e => e.Workload.DiskPath, Set = (e, v) => e.Workload.DiskPath = (string)v!,
-            FileFilter = "Disk image (*.img;*.raw)|*.img;*.raw|All files (*.*)|*.*" },
+            FileFilter = "Disk image (*.img;*.raw)|*.img;*.raw|All files (*.*)|*.*",
+            // riscv-emu's own virtio-blk backend (src/main.c's --disk)
+            // only ever reads a disk as flat raw bytes - no container
+            // format of its own at all - so a qcow2 file here would not
+            // fail cleanly, it would just read back as corrupt garbage
+            // (qcow2's own header/metadata misinterpreted as guest
+            // filesystem data). DiskImageService.LooksLikeQcow2's own
+            // extension check mirrors VmProcessManager's own GuessFormat
+            // (PR #7 feedback).
+            Validate = v => !string.IsNullOrWhiteSpace((string?)v) && DiskImageService.LooksLikeQcow2((string)v!)
+                ? "riscv-emu only supports raw disk images, not qcow2 - create one as raw (Storage page) or point this at an existing raw image."
+                : null },
         new() { Key = "Platform.MemoryMB", Label = "Memory (MB)", Type = FieldType.Int, Group = "Platform",
             Get = e => e.Platform.MemoryMB, Set = (e, v) => e.Platform.MemoryMB = (int)v!, Required = true,
             Validate = v => (int)v! > 0 ? null : "Memory must be a positive number of MB." },

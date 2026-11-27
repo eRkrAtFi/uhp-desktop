@@ -1,13 +1,17 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
+using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Media;
 using QemuManager.Models;
 using QemuManager.Services;
+using Color = System.Windows.Media.Color;
 using MessageBox = System.Windows.MessageBox;
 using Point = System.Windows.Point;
 
@@ -70,6 +74,7 @@ public partial class MainWindow : Window
         }
 
         _settings = AppSettings.Load();
+        RestoreColumnWidths();
         // A VM's process exiting without this window's own Power On/Shut
         // Down/Force Stop handlers having asked for it (closing a QEMU
         // gtk/sdl window directly, a crash, or a graceful ACPI shutdown
@@ -92,9 +97,18 @@ public partial class MainWindow : Window
         _vmService.StatsReceived += (vmId, stats) => Dispatcher.Invoke(() => ApplyStats(vmId, stats));
 
         LoadVms();
-        CheckEngineDirs();
         RefreshToolbarState();
         RefreshRecentTasks();
+        QemuDirBox.Text = _settings.QemuDir;
+        RiscvEmuDirBox.Text = _settings.RiscvEmuDir;
+
+        // Both fire-and-forget, not awaited, for the same reason
+        // ConsolePreviewTerminal.InitializeAsync below already is: must
+        // not block this constructor, and nothing downstream depends on
+        // either having completed yet - the Engines page's own initial
+        // "not found"/"-" text is what EnginesPage.xaml declares in XAML
+        // for every TextBlock these calls go on to fill in once they do.
+        _ = RefreshEnginesPageAsync();
 
         // Fire-and-forget, not awaited: WebView2's own async setup must
         // not block this constructor (ShowDialog/Show need to return
@@ -116,23 +130,230 @@ public partial class MainWindow : Window
         RefreshRunStates();
     }
 
-    // Was folded into the old blue status bar via SetStatus - moved to the
-    // Engines page instead (see MainWindow.xaml's EnginesInfoText): knowing
-    // where QEMU/riscv-emu were found is reference info about those
-    // engines, not a thing this app *did*, so it does not belong in Recent
-    // Tasks.
-    private void CheckEngineDirs()
+    private static readonly SolidColorBrush EngineFoundBrush = new(Color.FromRgb(0x3F, 0xB9, 0x50));
+    private static readonly SolidColorBrush EngineErrorBrush = new(Color.FromRgb(0xE0, 0xA5, 0x30));
+    private static readonly SolidColorBrush EngineNotFoundBrush = new(Color.FromRgb(0x9A, 0x9A, 0x9A));
+
+    /// <summary>Re-queries both engines' own install status (IVmService.
+    /// GetEngineStatusesAsync - path found/not found, --version,
+    /// architectures, how many Environments use each) and fills in the
+    /// Engines page. Called on startup, whenever the Engines node is
+    /// selected, and after QemuDirBox/RiscvEmuDirBox actually change -
+    /// not cached, since this page's whole point is "what is actually
+    /// there right now," the same reason IVmService's own doc comment on
+    /// GetEngineStatusesAsync gives for never caching it.</summary>
+    private async Task RefreshEnginesPageAsync()
     {
-        var parts = new List<string>();
-        parts.Add(QemuLocator.LooksLikeQemuDir(_settings.QemuDir)
-            ? $"QEMU: {_settings.QemuDir} ({QemuLocator.ListArchitectures(_settings.QemuDir).Count} architectures)."
-            : $"No QEMU installation found at '{_settings.QemuDir}'.");
-        parts.Add(string.IsNullOrWhiteSpace(_settings.RiscvEmuDir)
-            ? "riscv-emu: not configured."
-            : RiscvEmuLocator.LooksLikeRiscvEmuDir(_settings.RiscvEmuDir)
-                ? $"riscv-emu: {_settings.RiscvEmuDir}."
-                : $"riscv-emu not found at '{_settings.RiscvEmuDir}'.");
-        EnginesInfoText.Text = string.Join("\n", parts) + "\nOpen Settings to change either.";
+        var statuses = await _vmService.GetEngineStatusesAsync(_settings);
+        foreach (var status in statuses)
+        {
+            var (dot, statusText, versionText, archText, countText) = status.EngineId == "Qemu"
+                ? (QemuStatusDot, QemuStatusText, QemuVersionText, QemuArchitecturesText, QemuEnvironmentCountText)
+                : (RiscvEmuStatusDot, RiscvEmuStatusText, RiscvEmuVersionText, RiscvEmuArchitecturesText, RiscvEmuEnvironmentCountText);
+
+            dot.Fill = status.Status switch
+            {
+                EngineStatus.Found => EngineFoundBrush,
+                EngineStatus.Error => EngineErrorBrush,
+                _ => EngineNotFoundBrush,
+            };
+            statusText.Text = status.Status switch
+            {
+                EngineStatus.Found => "Found",
+                EngineStatus.Error => "Found, but --version failed",
+                _ => "Not found",
+            };
+            versionText.Text = status.VersionText ?? "-";
+            archText.Text = status.SupportedArchitectures.Count > 0 ? string.Join(", ", status.SupportedArchitectures) : "-";
+            countText.Text = status.EnvironmentCount.ToString();
+        }
+
+        // Only QEMU can actually use WHPX (Platform.Accelerator == "whpx")
+        // - riscv-emu has no accelerator choice of its own (always its
+        // own interpreter) - so this note lives on QEMU's own card, not
+        // duplicated on riscv-emu's or hoisted to the page as a whole.
+        QemuWhpxText.Text = WhpxStatus.IsEnabled()
+            ? "Enabled - QEMU Environments with Accelerator set to WHPX can use it."
+            : "Not available - QEMU Environments with Accelerator set to WHPX will fail to start; use TCG instead.";
+    }
+
+    private async void QemuBrowseButton_Click(object sender, RoutedEventArgs e)
+    {
+        using var dialog = new System.Windows.Forms.FolderBrowserDialog
+        {
+            Description = "Select the folder containing qemu-system-*.exe",
+            SelectedPath = QemuDirBox.Text,
+        };
+        if (dialog.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
+        QemuDirBox.Text = dialog.SelectedPath;
+        await SaveQemuDirAsync();
+    }
+
+    private async void QemuDirBox_LostFocus(object sender, RoutedEventArgs e) => await SaveQemuDirAsync();
+
+    private async Task SaveQemuDirAsync()
+    {
+        var path = QemuDirBox.Text.Trim();
+        if (path == _settings.QemuDir) return; // unchanged - avoid a redundant re-query/save on every unrelated LostFocus
+        _settings.QemuDir = path;
+        _settings.Save();
+        await RefreshEnginesPageAsync();
+    }
+
+    private async void RiscvEmuBrowseButton_Click(object sender, RoutedEventArgs e)
+    {
+        using var dialog = new System.Windows.Forms.FolderBrowserDialog
+        {
+            Description = "Select the riscv-emu folder (contains riscv-emu.exe and boot\\firmware.bin)",
+            SelectedPath = RiscvEmuDirBox.Text,
+        };
+        if (dialog.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
+        RiscvEmuDirBox.Text = dialog.SelectedPath;
+        await SaveRiscvEmuDirAsync();
+    }
+
+    private async void RiscvEmuDirBox_LostFocus(object sender, RoutedEventArgs e) => await SaveRiscvEmuDirAsync();
+
+    private async Task SaveRiscvEmuDirAsync()
+    {
+        var path = RiscvEmuDirBox.Text.Trim();
+        if (path == _settings.RiscvEmuDir) return;
+        _settings.RiscvEmuDir = path;
+        _settings.Save();
+        await RefreshEnginesPageAsync();
+    }
+
+    /// <summary>Host page's own facts (IVmService.GetHostInfo) - cheap
+    /// and synchronous (no process spawned, unlike the Engines page), so
+    /// this also doubles as part of RefreshSummary's own per-stats-tick
+    /// refresh, keeping the running-count/CPU/memory totals live while
+    /// the page happens to be open, not just on first navigating to it.</summary>
+    private void RefreshHostPage()
+    {
+        var host = _vmService.GetHostInfo();
+        HostOsText.Text = host.OperatingSystem;
+        HostCpuText.Text = host.CpuDescription;
+        HostMemoryText.Text = host.MemoryDescription;
+        HostFreeDiskText.Text = host.FreeDiskSpaceDescription;
+        HostWhpxText.Text = host.WhpxEnabled ? "Enabled" : "Not available";
+        HostRunningCountText.Text = $"{host.RunningEnvironments} / {host.TotalEnvironments}";
+        HostTotalCpuText.Text = $"{host.TotalCpuPercent:0.#}%";
+        HostTotalMemoryText.Text = $"{host.TotalMemoryBytes / (1024.0 * 1024):0} MB";
+    }
+
+    /// <summary>Storage page's own list (IVmService.GetDiskInventoryAsync)
+    /// - re-read every time the Storage node is selected or an action on
+    /// this page changes something, not kept continuously live the way
+    /// Host/the Environment grid are (nothing here changes on its own
+    /// between user actions the way a running VM's CPU% does).</summary>
+    private async Task RefreshStoragePageAsync()
+    {
+        var disks = await _vmService.GetDiskInventoryAsync(_settings);
+        DiskList.ItemsSource = disks.Select(d => new DiskListItem(d)).ToList();
+        RefreshStorageToolbarState();
+    }
+
+    private DiskListItem? SelectedDisk => DiskList.SelectedItem as DiskListItem;
+
+    private void DiskList_SelectionChanged(object sender, SelectionChangedEventArgs e) => RefreshStorageToolbarState();
+
+    private void RefreshStorageToolbarState()
+    {
+        var disk = SelectedDisk;
+        OpenDiskFolderButton.IsEnabled = disk != null;
+        RemoveDiskButton.IsEnabled = disk != null && disk.CanRemove;
+    }
+
+    private async void CreateDiskButton_Click(object sender, RoutedEventArgs e)
+    {
+        Directory.CreateDirectory(AppPaths.DisksDir);
+        // The first available "disk.qcow2"/"disk-2.qcow2"/... - a real
+        // bug otherwise (two different disks created with the same
+        // suggested default path, the second silently overwriting the
+        // first with no warning at all) - on top of (not instead of)
+        // CreateDiskWindow's own refusal to overwrite regardless.
+        var suggestedPath = DiskImageService.SuggestUniquePath(AppPaths.DisksDir, "disk", ".qcow2");
+        var dialog = new CreateDiskWindow(_settings.QemuDir, suggestedPath, _vmService) { Owner = this };
+        // CreateDiskWindow itself registers CreatedPath on success (see
+        // its own CreateButton_Click) - every disk made this way is
+        // recorded regardless of which entry point opened the dialog,
+        // not just the Storage page's own.
+        if (dialog.ShowDialog() == true) await RefreshStoragePageAsync();
+    }
+
+    private async void AddExistingDiskButton_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog { Filter = "Disk image (*.img;*.raw;*.qcow2)|*.img;*.raw;*.qcow2|All files (*.*)|*.*" };
+        if (dialog.ShowDialog() != true) return;
+        await _vmService.RegisterDiskAsync(dialog.FileName);
+        await RefreshStoragePageAsync();
+    }
+
+    private void OpenDiskFolderButton_Click(object sender, RoutedEventArgs e)
+    {
+        var disk = SelectedDisk;
+        if (disk == null) return;
+        // explorer.exe /select highlights the file itself rather than
+        // just opening its containing folder - a plain OS-shell action,
+        // the same kind of UI-layer-only concern ConsoleWindow's own
+        // window already is, nothing for UHP.Core to own.
+        try { Process.Start("explorer.exe", $"/select,\"{disk.Path}\""); }
+        catch (Exception ex) { MessageBox.Show(this, $"Could not open folder: {ex.Message}", "Open folder", MessageBoxButton.OK, MessageBoxImage.Warning); }
+    }
+
+    /// <summary>Un-registers the disk from the list - never deletes the
+    /// actual file (PR #7 feedback: an earlier version of this deleted
+    /// an unused disk's file, which is a far more dangerous default than
+    /// this page actually needs - Open folder is there for anyone who
+    /// genuinely wants to delete it themselves).</summary>
+    private async void RemoveDiskButton_Click(object sender, RoutedEventArgs e)
+    {
+        var disk = SelectedDisk;
+        if (disk == null || !disk.CanRemove) return;
+        await _vmService.RemoveDiskFromListAsync(disk.Path);
+        await RefreshStoragePageAsync();
+    }
+
+    /// <summary>Networking page's own list (IVmService.GetNetworkInventory)
+    /// - read-only, no toolbar, so unlike Storage this never needs its
+    /// own explicit re-read beyond selecting the node (Platform.NetworkMode
+    /// cannot change while this page is open - that only happens in the
+    /// editor, which always returns to the grid, not this page, on Save).</summary>
+    private void RefreshNetworkingPage()
+    {
+        NetworkList.ItemsSource = _vmService.GetNetworkInventory().Select(n => new NetworkListItem(n)).ToList();
+    }
+
+    /// <summary>Full, selectable/copyable text for one Storage row - a
+    /// tooltip alone cannot be selected or copied (PR #7 feedback).</summary>
+    private void DiskList_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (DiskList.SelectedItem is not DiskListItem disk) return;
+        var dialog = new RowDetailWindow("Disk: " + disk.FileName, new[]
+        {
+            ("Path", disk.Path),
+            ("Format", disk.Format),
+            ("Virtual size", disk.VirtualSizeText),
+            ("Size on disk", disk.ActualSizeText),
+            ("Used by", disk.UsedByText),
+            ("Exists", disk.ExistsText),
+        }) { Owner = this };
+        dialog.ShowDialog();
+    }
+
+    /// <summary>Same as DiskList_MouseDoubleClick, for one Networking row.</summary>
+    private void NetworkList_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (NetworkList.SelectedItem is not NetworkListItem net) return;
+        var dialog = new RowDetailWindow("Network: " + net.EnvironmentName, new[]
+        {
+            ("Environment", net.EnvironmentName),
+            ("Engine", net.EngineDisplayName),
+            ("Mode", net.Mode),
+            ("Guest address", net.GuestAddressText),
+            ("Gateway", net.GatewayAddressText),
+        }) { Owner = this };
+        dialog.ShowDialog();
     }
 
     private VmListItem? SelectedItem => VmList.SelectedItem as VmListItem;
@@ -399,14 +620,11 @@ public partial class MainWindow : Window
 
     private void SettingsButton_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new SettingsWindow(_settings.QemuDir, _settings.RiscvEmuDir, _settings.RiscvShutdownTimeoutSeconds) { Owner = this };
+        var dialog = new SettingsWindow(_settings.RiscvShutdownTimeoutSeconds) { Owner = this };
         if (dialog.ShowDialog() == true)
         {
-            _settings.QemuDir = dialog.QemuDir;
-            _settings.RiscvEmuDir = dialog.RiscvEmuDir;
             _settings.RiscvShutdownTimeoutSeconds = dialog.RiscvShutdownTimeoutSeconds;
             _settings.Save();
-            CheckEngineDirs();
         }
     }
 
@@ -423,13 +641,13 @@ public partial class MainWindow : Window
 
     private void RefreshSummary()
     {
-        var running = _items.Count(i => i.IsRunning);
         // The navigator card this used to live in is gone (Phase 1 fix) -
         // the VM count moves to a small badge on the node itself, and the
-        // running/total summary moves to the Host page, where ESXi/Proxmox
-        // would put host-level totals too.
+        // running/total summary moves to the Host page's own "Running /
+        // Total" tile (RefreshHostPage) - no longer duplicated here as a
+        // second, separate line above it (PR #7 feedback).
         VmCountBadge.Text = _items.Count.ToString();
-        HostSummaryText.Text = $"{running} running / {_items.Count} total Environment{(_items.Count == 1 ? "" : "s")}.";
+        RefreshHostPage();
     }
 
     /// <summary>Toolbar buttons (and their context-menu mirrors) enable or
@@ -562,6 +780,36 @@ public partial class MainWindow : Window
     /// in place: at most 200 rows, cheap enough that there is no real
     /// reason to build the incremental-update machinery that would avoid
     /// it.</summary>
+    // Every resizable grid this window owns, paired with the key its own
+    // column widths are saved under in AppSettings.ColumnWidths (PR #7
+    // feedback: a column resized by hand used to reset to this app's own
+    // hardcoded default ratio on every single restart).
+    private IEnumerable<(DataGrid Grid, string Key)> ResizableGrids()
+    {
+        yield return (VmList, "Environments");
+        yield return (DiskList, "Storage");
+        yield return (NetworkList, "Networking");
+        yield return (RecentTasksList, "RecentTasks");
+    }
+
+    private void RestoreColumnWidths()
+    {
+        foreach (var (grid, key) in ResizableGrids())
+            foreach (var column in grid.Columns)
+                if (_settings.ColumnWidths.TryGetValue($"{key}.{column.Header}", out var width) && width > 0)
+                    column.Width = new DataGridLength(width);
+    }
+
+    private void SaveColumnWidths()
+    {
+        foreach (var (grid, key) in ResizableGrids())
+            foreach (var column in grid.Columns)
+                _settings.ColumnWidths[$"{key}.{column.Header}"] = column.ActualWidth;
+        _settings.Save();
+    }
+
+    private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e) => SaveColumnWidths();
+
     private void RefreshRecentTasks() => RecentTasksList.ItemsSource = _vmService.GetRecentTasks();
 
     private void RecentTasksToggleButton_Click(object sender, RoutedEventArgs e)
@@ -570,7 +818,6 @@ public partial class MainWindow : Window
         if (collapsing)
         {
             _recentTasksExpandedHeight = RecentTasksRow.ActualHeight > 0 ? RecentTasksRow.ActualHeight : _recentTasksExpandedHeight;
-            RecentTasksColumnHeader.Visibility = Visibility.Collapsed;
             RecentTasksList.Visibility = Visibility.Collapsed;
             RecentTasksSplitter.IsEnabled = false;
             RecentTasksSplitter.Visibility = Visibility.Collapsed;
@@ -578,13 +825,30 @@ public partial class MainWindow : Window
         }
         else
         {
-            RecentTasksColumnHeader.Visibility = Visibility.Visible;
             RecentTasksList.Visibility = Visibility.Visible;
             RecentTasksSplitter.IsEnabled = true;
             RecentTasksSplitter.Visibility = Visibility.Visible;
             RecentTasksRow.Height = new GridLength(_recentTasksExpandedHeight);
         }
         RecentTasksToggleButton.Content = collapsing ? "Show" : "Hide";
+    }
+
+    /// <summary>Full, selectable/copyable text for one Recent Tasks row -
+    /// the grid's own cells truncate a long Target/Result, and a tooltip
+    /// alone cannot be selected or copied (PR #7 feedback).</summary>
+    private void RecentTasksList_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (RecentTasksList.SelectedItem is not TaskRecord task) return;
+        var dialog = new RowDetailWindow("Task: " + task.Name, new[]
+        {
+            ("Task", task.Name),
+            ("Target", task.Target),
+            ("Started", task.Started.ToString("yyyy-MM-dd HH:mm:ss")),
+            ("Completed", task.Completed?.ToString("yyyy-MM-dd HH:mm:ss") ?? "(still running)"),
+            ("Status", task.Status),
+            ("Result", task.Result),
+        }) { Owner = this };
+        dialog.ShowDialog();
     }
 
     private void NavigatorTree_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
@@ -634,9 +898,14 @@ public partial class MainWindow : Window
         }
         HostPage.Visibility = tag == "Host" ? Visibility.Visible : Visibility.Collapsed;
         EnginesPage.Visibility = tag == "Engines" ? Visibility.Visible : Visibility.Collapsed;
-        var isGenericPlaceholder = tag is "Storage" or "Networking";
-        PlaceholderPage.Visibility = isGenericPlaceholder ? Visibility.Visible : Visibility.Collapsed;
-        if (isGenericPlaceholder) PlaceholderTitle.Text = tag!;
+        StorageDiskPage.Visibility = tag == "Storage" ? Visibility.Visible : Visibility.Collapsed;
+        NetworkingPage.Visibility = tag == "Networking" ? Visibility.Visible : Visibility.Collapsed;
+        // Each re-read fresh on arrival rather than kept continuously live
+        // in the background - see each page's own refresh method for why.
+        if (tag == "Host") RefreshHostPage();
+        else if (tag == "Engines") _ = RefreshEnginesPageAsync();
+        else if (tag == "Storage") _ = RefreshStoragePageAsync();
+        else if (tag == "Networking") RefreshNetworkingPage();
         RefreshToolbarState();
     }
 

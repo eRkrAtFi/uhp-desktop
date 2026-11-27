@@ -13,6 +13,7 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
@@ -23,16 +24,37 @@
         </Grid.ColumnDefinitions>
 
         <TextBlock Grid.Row="0" Grid.Column="0" Text="File"/>
-        <TextBox x:Name="PathBox" Grid.Row="0" Grid.Column="1"/>
+        <TextBox x:Name="PathBox" Grid.Row="0" Grid.Column="1" TextChanged="PathBox_TextChanged"/>
         <Button x:Name="BrowseButton" Grid.Row="0" Grid.Column="2" Content="Browse..." Click="BrowseButton_Click"/>
 
-        <TextBlock Grid.Row="1" Grid.Column="0" Text="Size (GB)"/>
-        <TextBox x:Name="SizeBox" Grid.Row="1" Grid.Column="1" Text="20"/>
+        <TextBlock Grid.Row="1" Grid.Column="0" Text="Size"/>
+        <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Left">
+            <TextBox x:Name="SizeBox" Width="80" Text="20" AutomationProperties.Name="Disk size"/>
+            <ComboBox x:Name="SizeUnitCombo" Width="70" Margin="8,0,0,0" SelectedIndex="1" AutomationProperties.Name="Disk size unit">
+                <ComboBoxItem Content="MB"/>
+                <ComboBoxItem Content="GB"/>
+            </ComboBox>
+        </StackPanel>
 
-        <TextBlock x:Name="ValidationText" Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3"
+        <!-- raw: a plain file of exactly this size, written directly by
+             this app (FileStream.SetLength) - no qemu-img involved, so it
+             works even with no QEMU installed. qcow2: qemu-img create,
+             same as before - needs a real QEMU install. riscv-emu only
+             ever reads a disk as a flat raw image (see IEngine.
+             GetConfigSchema's own Workload.DiskPath Validate for either
+             engine) - qcow2's own container format is meaningless to it,
+             so an environment using that engine must never be pointed at
+             one (see EnvironmentEditWindow's own validation). -->
+        <TextBlock Grid.Row="2" Grid.Column="0" Text="Format"/>
+        <ComboBox x:Name="FormatCombo" Grid.Row="2" Grid.Column="1" Width="100" HorizontalAlignment="Left" AutomationProperties.Name="Disk format">
+            <ComboBoxItem Content="raw"/>
+            <ComboBoxItem Content="qcow2"/>
+        </ComboBox>
+
+        <TextBlock x:Name="ValidationText" Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="3"
                    Foreground="{StaticResource ErrorText}" TextWrapping="Wrap"/>
 
-        <StackPanel Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="3" Orientation="Horizontal" HorizontalAlignment="Right">
+        <StackPanel Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="3" Orientation="Horizontal" HorizontalAlignment="Right">
             <Button x:Name="CreateButton" Content="Create" Click="CreateButton_Click" Background="{StaticResource SuccessBg}"/>
             <Button x:Name="CancelButton" Content="Cancel" Click="CancelButton_Click"/>
         </StackPanel>
